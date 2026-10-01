@@ -1,0 +1,319 @@
+# jobs_config.toml - settings for jobs.py
+# Contains your API key: keep it private (chmod 600) and never commit it.
+
+# Serper.dev API key (https://serper.dev)
+api_key = "a388e2ed6997dba3e3824702dc902d5bef949ff0"
+
+# Only keep results Google indexed in the last N days.
+# Google can take a few days to index new pages; deduplication makes sure
+# you only see each offer once, so a week is a safe default.
+days = 7
+
+# Max results requested per query (Serper accepts 10, 20, ... 100).
+results_per_query = 100
+
+# Contract types to search for, one query each. e.g. ["alternance"], ["CDI"],
+# or ["alternance", "CDI"] for both.
+contract_types = ["alternance"]
+
+[location]
+country = "France"
+country_code = "fr"   # Google gl/hl code: results and interface for this country
+# Cities to search, one query each. Empty list = whole country only.
+# Each entry multiplies the number of searches (and credits) per run.
+# "" = no city, i.e. the whole country. Without "", France-wide search is dropped.
+# Order = search order: the priority cities first, then all of France.
+cities = ["Metz", "Nancy", "Strasbourg", ""]
+# Offers located in these cities are listed first in the daily report and pinned
+# to the top of the HTML page (marked ★). Defaults to the named entries of `cities`.
+# Add nearby towns here to treat them as priority too, e.g. "Thionville".
+priority_cities = ["Metz", "Nancy", "Strasbourg"]
+# Cities recognised in offer titles/URLs for the "city" column and filter.
+# Not used for searching, so adding names here costs nothing.
+known_cities = [
+    "Paris", "La Défense", "Courbevoie", "Puteaux", "Nanterre", "Boulogne-Billancourt",
+    "Issy-les-Moulineaux", "Levallois-Perret", "Saint-Denis", "Massy", "Saclay", "Vélizy",
+    "Lyon", "Marseille", "Toulouse", "Nice", "Sophia Antipolis", "Nantes", "Strasbourg",
+    "Montpellier", "Bordeaux", "Lille", "Villeneuve-d'Ascq", "Rennes", "Reims", "Grenoble",
+    "Toulon", "Dijon", "Angers", "Nîmes", "Clermont-Ferrand", "Le Mans", "Aix-en-Provence",
+    "Brest", "Tours", "Amiens", "Limoges", "Metz", "Besançon", "Orléans", "Rouen", "Caen",
+    "Nancy", "Pau", "Annecy", "Mulhouse", "Poitiers", "Valence",
+    # around Metz / Nancy / Strasbourg
+    "Thionville", "Schiltigheim", "Illkirch-Graffenstaden", "Vandœuvre-lès-Nancy",
+    "Bouxières-sous-Froidmont", "Colmar", "Haguenau", "Sarreguemines", "Forbach",
+]
+
+[filters]
+# Keep only offers whose title or URL contains one of the job titles (or synonyms).
+require_title_match = true
+# Detected contract types to drop entirely, e.g. ["Stage"] to hide internships.
+# Possible values: Alternance, Stage, CDI, CDD, Freelance, Inconnu
+hide_contracts = ["Stage", "Freelance", "Inconnu"]
+
+# Job position names. One query is sent per site x job x contract type x city,
+# so every entry added here costs (sites x contract types x cities) credits per run.
+[jobs]
+titles = [
+    "IA",
+    "AI",
+    "Ingénieur IA",
+    "Machine Learning",
+    "Data Scientist",
+    "MLOps",
+    "Data Engineer",
+    "IA générative",
+    "NLP",
+    "Data",
+]
+
+# Job titles whose synonyms are also SEARCHED, not only matched. Each searched
+# synonym costs 1 credit per site per run (NLP: 4 synonyms x 3 sites = 12 extra).
+# Remove a title from this list to search only its own name again.
+search_synonyms = ["NLP"]
+
+# Extra words that count as a match for a job title (matching ignores case,
+# accents and hyphens). Titles without an entry here match on their own name only.
+# These are NOT searched (cost no credits), except for titles in search_synonyms.
+[jobs.synonyms]
+"IA" = ["intelligence artificielle", "artificial intelligence"]
+"AI" = ["artificial intelligence"]
+"Ingénieur IA" = ["AI engineer", "ingénieur intelligence artificielle"]
+"Machine Learning" = ["ML", "deep learning"]
+"Data Scientist" = ["data science", "datascientist"]
+"MLOps" = ["ML ops"]
+"Data Engineer" = ["data engineering", "ingénieur data"]
+"IA générative" = ["generative AI", "GenAI", "LLM"]
+"NLP" = [
+    "Natural Language Processing",
+    "Traitement automatique des langues",
+    "Traitement automatique du langage",
+    "Speech processing",
+]
+
+# Websites to search. Copy a [[sites]] block to add one.
+#   keyword      - plain word(s) added to the query to steer Google toward the site
+#                  (Serper's free plan rejects the site: operator)
+#   domains      - only results whose link is on one of these domains (or their
+#                  subdomains) are kept
+#   offer_paths  - optional regexes on the URL path; a result is kept only if one
+#                  matches. Drops search/category pages. Omit to keep every page.
+[[sites]]
+name = "Welcome to the Jungle"
+keyword = "welcometothejungle"
+domains = ["welcometothejungle.com"]
+offer_paths = ['/companies/[^/]+/jobs/']
+
+[[sites]]
+name = "JobTeaser"
+keyword = "jobteaser"
+domains = ["jobteaser.com"]
+offer_paths = ['/job-offers/[0-9a-f]{8}-']
+
+[[sites]]
+name = "HelloWork"
+keyword = "hellowork"
+domains = ["hellowork.com"]
+offer_paths = ['/emplois/\d+\.html']
+# No date filter for this site's Google searches (0 = none). HelloWork's category
+# pages are permanent, so a "last 7 days" filter hides them; freshness comes from
+# reading the pages themselves + dedup in offers.csv.
+days = 0
+# Open HelloWork pages directly (no Serper credits): drop offers HelloWork marks as
+# expired, and collect the offer cards listed on each page. The pages opened on
+# every run are listed in the [[hellowork_pages]] section at the end of this file.
+expand = "hellowork"
+# Also guess /fr-fr/<contract type>/mot-cle_<job title>.html for every job title.
+# Off: most guesses don't exist (404); the ones that do are listed below instead.
+auto_pages = false
+max_pages = 40      # at most this many HelloWork pages opened per run (direct pages first)
+page_delay = 1.5    # seconds between page requests, to stay polite
+
+
+# ---------------------------------------------------------------------------
+# HelloWork pages opened directly on every run, whatever Google returns.
+# No Serper credits. Each page shows its first 20 offers; every offer then goes
+# through the same filters (job title match, hidden contracts, dedup).
+#
+# To add one: search on hellowork.com in your browser, copy the listing URL from
+# the address bar, and add a block. The URL must not contain "?" (HelloWork's
+# robots.txt forbids those, e.g. its search page and page 2, 3, ...).
+#   name     - label, shown in the "Source" column/filter of the HTML report
+#   url      - the HelloWork listing page
+#   enabled  - false to skip it without deleting it
+# ---------------------------------------------------------------------------
+
+# Pages below were checked on 2026-10-01. HelloWork names some pages "mot-cle_"
+# and others "metier_"; for NLP and its synonyms (natural language processing,
+# traitement automatique des langues/du langage, TAL, speech processing) only
+# "metier_ingenieur-nlp" exists. Other NLP offers show up inside the IA / Machine
+# Learning pages, and the Google searches cover all NLP synonyms (search_synonyms).
+# IA générative has no page at all.
+
+# --- France ------------------------------------------------------------------
+
+[[hellowork_pages]]
+name = "France - NLP"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_ingenieur-nlp.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "France - IA"
+url = "https://www.hellowork.com/fr-fr/alternance/mot-cle_ia.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "France - AI"
+url = "https://www.hellowork.com/fr-fr/alternance/mot-cle_ai.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "France - Intelligence artificielle"
+url = "https://www.hellowork.com/fr-fr/alternance/mot-cle_intelligence-artificielle.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "France - Ingénieur IA (recherche)"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_ingenieur-de-recherche-en-intelligence-artificielle.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "France - Machine Learning"
+url = "https://www.hellowork.com/fr-fr/alternance/mot-cle_machine-learning.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "France - Machine Learning Engineer"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_machine-learning-engineer.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "France - MLOps"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_mlops-engineer.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "France - Data Scientist"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_data-scientist.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "France - Data Engineer"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_data-engineer.html"
+enabled = true
+
+# Generic "Data" (mostly Data Analyst offers). Not one of the focus titles: off.
+[[hellowork_pages]]
+name = "France - Data"
+url = "https://www.hellowork.com/fr-fr/alternance/mot-cle_data.html"
+enabled = false
+
+# --- Priority cities ---------------------------------------------------------
+# HelloWork has city versions only of the "metier_" pages (plus mot-cle_data);
+# the mot-cle_ia / ai / intelligence-artificielle / machine-learning city pages
+# don't exist (404). Most of these hold 0 offers today; they're kept so offers
+# show up as soon as they're posted.
+
+[[hellowork_pages]]
+name = "Metz - NLP"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_ingenieur-nlp-ville_metz-57000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Metz - Ingénieur IA (recherche)"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_ingenieur-de-recherche-en-intelligence-artificielle-ville_metz-57000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Metz - Machine Learning Engineer"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_machine-learning-engineer-ville_metz-57000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Metz - MLOps"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_mlops-engineer-ville_metz-57000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Metz - Data Scientist"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_data-scientist-ville_metz-57000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Metz - Data Engineer"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_data-engineer-ville_metz-57000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Metz - Data"
+url = "https://www.hellowork.com/fr-fr/alternance/mot-cle_data-ville_metz-57000.html"
+enabled = false
+
+[[hellowork_pages]]
+name = "Nancy - NLP"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_ingenieur-nlp-ville_nancy-54000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Nancy - Ingénieur IA (recherche)"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_ingenieur-de-recherche-en-intelligence-artificielle-ville_nancy-54000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Nancy - Machine Learning Engineer"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_machine-learning-engineer-ville_nancy-54000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Nancy - MLOps"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_mlops-engineer-ville_nancy-54000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Nancy - Data Scientist"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_data-scientist-ville_nancy-54000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Nancy - Data Engineer"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_data-engineer-ville_nancy-54000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Nancy - Data"
+url = "https://www.hellowork.com/fr-fr/alternance/mot-cle_data-ville_nancy-54000.html"
+enabled = false
+
+[[hellowork_pages]]
+name = "Strasbourg - NLP"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_ingenieur-nlp-ville_strasbourg-67000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Strasbourg - Ingénieur IA (recherche)"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_ingenieur-de-recherche-en-intelligence-artificielle-ville_strasbourg-67000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Strasbourg - Machine Learning Engineer"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_machine-learning-engineer-ville_strasbourg-67000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Strasbourg - MLOps"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_mlops-engineer-ville_strasbourg-67000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Strasbourg - Data Scientist"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_data-scientist-ville_strasbourg-67000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Strasbourg - Data Engineer"
+url = "https://www.hellowork.com/fr-fr/alternance/metier_data-engineer-ville_strasbourg-67000.html"
+enabled = true
+
+[[hellowork_pages]]
+name = "Strasbourg - Data"
+url = "https://www.hellowork.com/fr-fr/alternance/mot-cle_data-ville_strasbourg-67000.html"
+enabled = false

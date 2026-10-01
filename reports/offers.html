@@ -1,0 +1,464 @@
+<!doctype html>
+<!--
+  report_template.html - template for reports/offers.html, filled in by jobs.py.
+  jobs.py replaces the data placeholder in the <script id="data"> tag below with
+  the offers as JSON (the placeholder must appear only there).
+  Self-contained: no external scripts, works offline from file://.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job offers</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #677085;
+    --border: #e2e5eb; --accent: #2f6fde; --accent-soft: #e6eefc; --hover: #f1f4f9;
+    --b-alt: #1f8a4c; --b-alt-bg: #e3f5ea; --b-stage: #a35a00; --b-stage-bg: #fdf0dd;
+    --b-cdi: #2f6fde; --b-cdi-bg: #e6eefc; --b-other: #677085; --b-other-bg: #eef0f4;
+    --new: #d6336c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1a1e26; --text: #e4e7ee; --muted: #8e97aa;
+      --border: #2a303b; --accent: #6d9cf0; --accent-soft: #23314d; --hover: #212632;
+      --b-alt: #5fd394; --b-alt-bg: #193526; --b-stage: #f0b35c; --b-stage-bg: #3a2b14;
+      --b-cdi: #6d9cf0; --b-cdi-bg: #23314d; --b-other: #a5adbd; --b-other-bg: #262b35;
+      --new: #f06595;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--panel);
+    display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseline;
+  }
+  header h1 { margin: 0; font-size: 18px; }
+  header .meta { color: var(--muted); }
+  .layout { display: grid; grid-template-columns: 260px 1fr; gap: 16px; padding: 16px 20px; }
+  aside { display: flex; flex-direction: column; gap: 12px; }
+  .box { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .box h3 {
+    margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); display: flex; justify-content: space-between; align-items: center;
+  }
+  .box h3 button { font-size: 11px; text-transform: none; letter-spacing: 0; }
+  /* Reserve room for the scrollbar so it never covers the right-aligned counts */
+  .facet {
+    max-height: 220px; overflow-y: auto; padding-right: 8px;
+    scrollbar-gutter: stable; scrollbar-width: thin;
+  }
+  .facet label {
+    display: flex; gap: 6px; align-items: center; padding: 2px 0; cursor: pointer;
+    white-space: nowrap; overflow: hidden;
+  }
+  .facet label span.name { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  .facet label span.count { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .facet label.zero { opacity: .45; }
+  .facet-search { width: 100%; margin-bottom: 6px; }
+  input[type=search], select {
+    width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--text); font: inherit;
+  }
+  button {
+    background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--accent);
+    padding: 4px 8px; font: inherit; cursor: pointer;
+  }
+  button:hover { background: var(--hover); }
+  main { min-width: 0; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .toolbar .count { color: var(--muted); margin-right: auto; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    background: var(--accent-soft); color: var(--accent); border: none; border-radius: 999px;
+    padding: 2px 10px; font-size: 12px;
+  }
+  .table-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th {
+    font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; cursor: pointer;
+    user-select: none; position: sticky; top: 0; background: var(--panel);
+  }
+  th.sorted { color: var(--text); }
+  tbody tr:hover { background: var(--hover); }
+  td.title a { color: var(--text); text-decoration: none; font-weight: 500; }
+  td.title a:hover { color: var(--accent); text-decoration: underline; }
+  td.title .sub { color: var(--muted); font-size: 12px; }
+  td.nowrap { white-space: nowrap; }
+  .muted { color: var(--muted); }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .b-Alternance { color: var(--b-alt); background: var(--b-alt-bg); }
+  .b-Stage { color: var(--b-stage); background: var(--b-stage-bg); }
+  .b-CDI { color: var(--b-cdi); background: var(--b-cdi-bg); }
+  .b-other { color: var(--b-other); background: var(--b-other-bg); }
+  .new { color: var(--new); font-weight: 700; font-size: 11px; margin-left: 4px; }
+  td.prio { color: var(--b-stage); font-weight: 600; }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  @media (max-width: 820px) {
+    .layout { grid-template-columns: 1fr; padding: 12px 16px; }
+    header { padding: 12px 16px; }
+    .facet { max-height: 160px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Job offers</h1>
+  <span class="meta" id="meta"></span>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="box">
+      <h3>Search</h3>
+      <input type="search" id="q" placeholder="Title, company, city…" autocomplete="off">
+    </div>
+    <div class="box">
+      <h3>Published</h3>
+      <select id="posted" autocomplete="off">
+        <option value="">Any date</option>
+        <option value="0">Today</option>
+        <option value="3">Last 3 days</option>
+        <option value="7">Last 7 days</option>
+        <option value="14">Last 14 days</option>
+        <option value="30">Last 30 days</option>
+        <option value="unknown">Date unknown</option>
+      </select>
+    </div>
+    <div class="box">
+      <h3>Found</h3>
+      <select id="found" autocomplete="off">
+        <option value="">Any date</option>
+        <option value="0">Today</option>
+        <option value="3">Last 3 days</option>
+        <option value="7">Last 7 days</option>
+        <option value="30">Last 30 days</option>
+      </select>
+    </div>
+    <div id="facets"></div>
+  </aside>
+
+  <main>
+    <div class="toolbar">
+      <span class="count" id="count"></span>
+      <div class="chips" id="chips"></div>
+      <button id="reset">Reset</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr id="head"></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="empty" id="empty" hidden>No offers match the filters.</div>
+    </div>
+  </main>
+</div>
+
+<script id="data" type="application/json">{"generated": "2026-10-01 23:06", "today": "2026-10-01", "titles": ["IA", "AI", "Ingénieur IA", "Machine Learning", "Data Scientist", "MLOps", "Data Engineer", "IA générative", "NLP", "Data"], "contracts": ["Alternance", "Stage", "CDI", "CDD", "Freelance", "Inconnu"], "priority_cities": ["Metz", "Nancy", "Strasbourg"], "offers": [{"found": "2026-10-01", "posted": "2026-09-28", "contract": "Alternance", "job": "Machine Learning", "matched": "Machine Learning", "title": "Alternance ML Software Engineer – ChapsVision", "company": "Chapsvision", "city": "Paris", "country": "France", "remote": "", "salary": "", "site": "Welcome to the Jungle", "source": "", "status": "", "notes": "", "url": "https://www.welcometothejungle.com/en-GB/companies/chapsvision/jobs/alternance-ml-software-engineer_paris"}, {"found": "2026-10-01", "posted": "2026-09-28", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Ingénieure / Ingénieur Qualité IA - Alternance à Toulouse", "company": "Capgemini", "city": "Toulouse", "country": "France", "remote": "", "salary": "", "site": "Welcome to the Jungle", "source": "", "status": "", "notes": "", "url": "https://www.welcometothejungle.com/fr/companies/capgemini/jobs/ingenieure-ingenieur-qualite-ia-alternance_toulouse"}, {"found": "2026-10-01", "posted": "2026-09-28", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Stage Logiciel : Optimisation d'une plateforme d ...", "company": "Mbda France Fr", "city": "Le Plessis Robinson", "country": "France", "remote": "", "salary": "", "site": "Welcome to the Jungle", "source": "", "status": "", "notes": "", "url": "https://www.welcometothejungle.com/fr/companies/mbda-france-fr/jobs/stage-logiciel-optimisation-d-une-plateforme-d-apprentissage-machine-et-d-ia-de-confiance-f-h_le-plessis-robinson"}, {"found": "2026-10-01", "posted": "2026-09-30", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Talent Acquisition Specialist (Alternance) - FRANCE IA", "company": "France Ia 1", "city": "", "country": "France", "remote": "", "salary": "", "site": "Welcome to the Jungle", "source": "", "status": "", "notes": "", "url": "https://www.welcometothejungle.com/fr/companies/france-ia-1/jobs/0aa72afb-45dd-427c-a59d-d94c8357f46e"}, {"found": "2026-10-01", "posted": "2026-09-25", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Data Engineer for Cognite Platform (CDF) débutant H/F", "company": "Totalenergies", "city": "Pau", "country": "France", "remote": "Hybride", "salary": "", "site": "Welcome to the Jungle", "source": "", "status": "", "notes": "", "url": "https://www.welcometothejungle.com/fr/companies/totalenergies/jobs/data-engineer-for-cognite-platform-cdf-debutant-h-f_pau"}, {"found": "2026-10-01", "posted": "2026-09-25", "contract": "CDI", "job": "Data Scientist", "matched": "Data Scientist", "title": "Data Scientist Marketing F/H - Auchan - CDI à Villeneuve-d'Ascq", "company": "Auchan", "city": "Villeneuve-d'Ascq", "country": "France", "remote": "", "salary": "", "site": "Welcome to the Jungle", "source": "", "status": "", "notes": "", "url": "https://www.welcometothejungle.com/fr/companies/auchan/jobs/data-scientist-marketing-f-h_villeneuve-d-ascq"}, {"found": "2026-10-01", "posted": "2026-09-30", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance Digital, IA & Employee Experience - Septembre ...", "company": "", "city": "Paris", "country": "France", "remote": "", "salary": "", "site": "JobTeaser", "source": "", "status": "", "notes": "", "url": "https://www.jobteaser.com/fr/job-offers/47842d49-2e48-48ff-b518-801acb28c30f-rothschild-co-alternance-digital-ia-employee-experience-septembre-2026"}, {"found": "2026-10-01", "posted": "2026-09-25", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance - Développeur·se Full-Stack IA (React / Python)", "company": "", "city": "Paris", "country": "France", "remote": "Hybride", "salary": "", "site": "JobTeaser", "source": "", "status": "", "notes": "", "url": "https://www.jobteaser.com/fr/job-offers/da9c22f5-0ffe-4f0a-ac87-20dffe30899f-flowt-alternance-developpeur-se-full-stack-ia-react-python"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Machine Learning", "matched": "Machine Learning", "title": "Ingénieur Jumeaux Numérique & Machine Learning H/F", "company": "", "city": "", "country": "France", "remote": "", "salary": "", "site": "JobTeaser", "source": "", "status": "", "notes": "", "url": "https://www.jobteaser.com/en/job-offers/0a1e802a-85f1-4f1d-a71e-830408cf530e-cetim-alternance-ingenieur-jumeaux-numerique-machine-learning-h-f"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Alternance (1 an) - Data analyste - Analyste quantitatif F/H", "company": "", "city": "Paris", "country": "France", "remote": "", "salary": "", "site": "JobTeaser", "source": "", "status": "", "notes": "", "url": "https://www.jobteaser.com/en/job-offers/6e17d6cc-617f-4e9a-bd5a-87a6dc95148f-groupe-bpce-alternance-1-an-data-analyste-analyste-quantitatif-f-h-paris"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Data Engineer Governance Apprentice", "company": "", "city": "Paris", "country": "France", "remote": "Hybride", "salary": "", "site": "JobTeaser", "source": "", "status": "", "notes": "", "url": "https://www.jobteaser.com/fr/job-offers/09246b95-45d5-4fa5-b164-805b8a45b447-forvia-faurecia-data-engineer-governance-apprentice"}, {"found": "2026-10-01", "posted": "2026-09-29", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Data Engineer (F/H) - en alternance", "company": "", "city": "Massy", "country": "France", "remote": "Hybride", "salary": "", "site": "JobTeaser", "source": "", "status": "", "notes": "", "url": "https://www.jobteaser.com/fr/job-offers/87159037-894e-4ed3-a7d6-717916e239b8-carrefour-france-data-engineer-f-h-en-alternance"}, {"found": "2026-10-01", "posted": "2026-09-28", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "VIE - Data Analyst (H/F) - New York", "company": "", "city": "", "country": "France", "remote": "", "salary": "", "site": "JobTeaser", "source": "", "status": "", "notes": "", "url": "https://www.jobteaser.com/en/job-offers/8eaf964d-a7f6-40a1-bbf0-a8c4213095f7-hermes-vie-data-analyst-h-f-new-york"}, {"found": "2026-10-01", "posted": "2026-09-30", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Portfolio Performance and Data - Apprentice", "company": "", "city": "Issy-les-Moulineaux", "country": "France", "remote": "Hybride", "salary": "", "site": "JobTeaser", "source": "", "status": "", "notes": "", "url": "https://www.jobteaser.com/fr/job-offers/966b8587-52b1-42b4-a5d2-74f6fd64026c-accor-portfolio-performance-and-data-apprentice"}, {"found": "2026-10-01", "posted": "2026-09-29", "contract": "Alternance", "job": "Data Scientist", "matched": "Data Scientist", "title": "Alternant - Data Science et Plan d'Experiences Modélisation des Procédés de Valorisation du Co2 H/F", "company": "Veolia Environnement", "city": "Aubervilliers", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (offres similaires)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/79509178.html"}, {"found": "2026-10-01", "posted": "2026-09-29", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Data Analyste Import - Alternance H/F", "company": "Carrefour", "city": "Massy", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (offres similaires)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/78473766.html"}, {"found": "2026-10-01", "posted": "2026-09-29", "contract": "Alternance", "job": "Data Scientist", "matched": "Data Scientist", "title": "Apprenti Junior Data Scientist H/F", "company": "Valeo", "city": "Cergy", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (offres similaires)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/78438455.html"}, {"found": "2026-10-01", "posted": "2026-09-07", "contract": "Alternance", "job": "Ingénieur IA", "matched": "Ingénieur IA", "title": "Alternant Ingénieur IA & Automatisation H/F", "company": "Tamgroupe", "city": "Moissy-Cramayel", "country": "France", "remote": "", "salary": "504,10 € / mois", "site": "HelloWork", "source": "HelloWork (offres similaires)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81058649.html"}, {"found": "2026-10-01", "posted": "2026-09-22", "contract": "Alternance", "job": "Data", "matched": "AI, Data", "title": "Apprenti·e Data & ai Product Builder H/F", "company": "Safran", "city": "Montereau-sur-le-Jard", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (offres similaires)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83644134.html"}, {"found": "2026-10-01", "posted": "2026-09-12", "contract": "Alternance", "job": "IA générative", "matched": "IA générative", "title": "Alternant IA Générative & Automatisation Métiers H/F", "company": "Docaposte", "city": "Paris", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (offres similaires)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83314028.html"}, {"found": "2026-10-01", "posted": "2026-09-30", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Alternance - Data Analyst H/F", "company": "L'Industrie recrute", "city": "Mantes-la-Jolie", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (offres similaires)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81880727.html"}, {"found": "2026-10-01", "posted": "2026-09-23", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance - Chef de Projet Transformation IA & Processus H/F", "company": "Elior Group", "city": "Créteil", "country": "France", "remote": "", "salary": "11 411 - 26 539 € / an", "site": "HelloWork", "source": "HelloWork (offres similaires)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83677969.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Alternance - Ingénieur Etudes et Projets - Data Analyst H/F", "company": "Veolia Eau", "city": "Puteaux", "country": "France", "remote": "", "salary": "1 948 - 2 051 € / mois", "site": "HelloWork", "source": "HelloWork (offres similaires)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83981557.html"}, {"found": "2026-10-01", "posted": "2026-09-07", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Alternance - Data Analyste - Analyste Quantitatif - Paris H/F", "company": "BPCE SA", "city": "Paris", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (offres similaires)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/76501526.html"}, {"found": "2026-10-01", "posted": "2026-09-14", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Apprenti·e - Ingénieur·e Data H/F", "company": "Safran", "city": "Moissy-Cramayel", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (offres similaires)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/82305592.html"}, {"found": "2026-10-01", "posted": "2026-09-07", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Apprenti Data Ingénieur H/F", "company": "Spie GLOBAL SERVICES ENERGY", "city": "Cergy", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (offres similaires)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/82130810.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance - Chef.Fe de Projet IA & Transformation H/F", "company": "Iriig", "city": "Lyon", "country": "France", "remote": "", "salary": "1 138,88 - 1 456,28 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83981770.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance - Consultant Financement de l'Innovation & IA H/F", "company": "Iriig", "city": "Lyon", "country": "France", "remote": "", "salary": "1 138,88 - 1 456,28 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83981794.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance - Chargé de Projet Marketing Digital & IA H/F", "company": "Iriig", "city": "Lyon", "country": "France", "remote": "", "salary": "1 138,88 - 1 456,28 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83981823.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance - Product Owner IA H/F", "company": "Iriig", "city": "Lyon", "country": "France", "remote": "", "salary": "1 138,88 - 1 456,28 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83981815.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Chargé·e de Projet Intelligence Artificielle - Alternance H/F", "company": "Ctre Scientifique Technique du Batiment", "city": "Champs-sur-Marne", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81910166.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data Scientist", "matched": "Data Scientist", "title": "Alternance -Assistant Data Scientist H/F", "company": "Hermes Sellier", "city": "Paris", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81913338.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data Scientist", "matched": "Data Scientist", "title": "Data Scientist - Niveau de Vie des Personnes Placées Sous Main de Justice H/F", "company": "Direction de l'administration pénitentiaire", "city": "Paris", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/79616413.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "IA", "matched": "IA, Data", "title": "Alternance - Informatique Big Data et Intelligence Artificielle Référence 2026-108487 H/F", "company": "Schneider Electric France", "city": "Mâcon", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81912822.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data Scientist", "matched": "IA, Data Scientist", "title": "Data Scientist - IA en Alternance H/F", "company": "Septeo", "city": "Courbevoie", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81913238.html"}, {"found": "2026-10-01", "posted": "2026-09-29", "contract": "Alternance", "job": "Ingénieur IA", "matched": "Ingénieur IA", "title": "Ingénieur Intelligence Artificielle - Alternance H/F", "company": "Kaischool", "city": "Fontenay-sous-Bois", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83909951.html"}, {"found": "2026-10-01", "posted": "2026-09-26", "contract": "Alternance", "job": "Data Engineer", "matched": "IA, Data Engineer", "title": "Ingénieur Data & IA - Formation Bac+4 en Alternance H/F", "company": "EPSI Toulouse", "city": "Toulouse", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/80613229.html"}, {"found": "2026-10-01", "posted": "2026-09-26", "contract": "Alternance", "job": "Data", "matched": "IA, Data", "title": "Alternance - Data Architect - Mastere Big Data et IA H/F", "company": "Sup de Vinci", "city": "Puteaux", "country": "France", "remote": "", "salary": "22 404,20 € / an", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/80613041.html"}, {"found": "2026-10-01", "posted": "2026-09-23", "contract": "Alternance", "job": "Ingénieur IA", "matched": "Ingénieur IA", "title": "Ingénieur IA Industrielle en Alternance H/F", "company": "Ecole 18.06", "city": "Marckolsheim", "country": "France", "remote": "", "salary": "22 404,20 - 23 000 € / an", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81611948.html"}, {"found": "2026-10-01", "posted": "2026-09-24", "contract": "Alternance", "job": "IA", "matched": "IA, Data", "title": "Alternant Data & Intelligence Artificielle H/F", "company": "Emova Group", "city": "Issy-les-Moulineaux", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/80512743.html"}, {"found": "2026-10-01", "posted": "2026-09-21", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Spécialiste en Conception et Déploiement de Solutions IA - Alternance H/F", "company": "REDSUP", "city": "Clichy", "country": "France", "remote": "", "salary": "12,31 € / heure", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/79218977.html"}, {"found": "2026-10-01", "posted": "2026-09-17", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Spécialiste en Conception et Déploiement de Solutions IA - Alternance H/F", "company": "REDSUP", "city": "Clichy", "country": "France", "remote": "", "salary": "15 000 € / an", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83493686.html"}, {"found": "2026-10-01", "posted": "2026-09-17", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Spécialiste en Conception et Déploiement de Solutions IA - Alternance H/F", "company": "REDSUP", "city": "Paris", "country": "France", "remote": "", "salary": "15 000 € / an", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83493690.html"}, {"found": "2026-10-01", "posted": "2026-09-17", "contract": "Alternance", "job": "Machine Learning", "matched": "Machine Learning", "title": "Alternant Machine Learning Engineer - Bac+¾ - Lyon H/F", "company": "NEXA Digital School", "city": "Lyon", "country": "France", "remote": "", "salary": "800 - 1 500 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81401207.html"}, {"found": "2026-10-01", "posted": "2026-09-28", "contract": "Alternance", "job": "Ingénieur IA", "matched": "Ingénieur IA", "title": "Offre d'Alternance en Apprentissage ai Engineer H/F", "company": "Ecole 18.06", "city": "Nice - Molsheim", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81815592.html"}, {"found": "2026-10-01", "posted": "2026-09-15", "contract": "Alternance", "job": "IA", "matched": "IA, Data Scientist", "title": "Apprenti·e en Data Science et Intelligence Artificielle H/F", "company": "École Nationale des Greffes", "city": "Dijon", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81302813.html"}, {"found": "2026-10-01", "posted": "2026-09-10", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Alternance Data Analyse · Bac+4 à Bac+5 · Lyon H/F", "company": "NEXA Digital School", "city": "Auvergne-Rhône-Alpes", "country": "France", "remote": "", "salary": "21 876,40 € / an", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/79957440.html"}, {"found": "2026-10-01", "posted": "", "contract": "Alternance", "job": "Ingénieur IA", "matched": "Ingénieur IA", "title": "Alternance - Ingénieur Intelligence Artificielle H/F", "company": "Aledia", "city": "Champagnier", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/80595724.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Chargé d'Études IA H/F", "company": "Sup de Vinci", "city": "Nouvelle-Aquitaine", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/78584119.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Chargé ou Chargée d'Affaire Intelligence Artificielle en Apprentissage H/F", "company": "Agence Nationale de la Recherche", "city": "Paris", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/79615479.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance - Informatique - Intelligence Artificielle H/F", "company": "Eiffage Energie Systemes - Gestion & Developpement", "city": "Vélizy-Villacoublay", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81910183.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternant Chef de Projet IA RH H/F", "company": "Regie Autonome des Transports Parisiens", "city": "Paris", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81911731.html"}, {"found": "2026-10-01", "posted": "2026-09-29", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance IA · Bac+3 à Bac+5 · Lyon H/F", "company": "NEXA Digital School", "city": "Lyon", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81845256.html"}, {"found": "2026-10-01", "posted": "2026-09-27", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance Consultant Business & IA H/F", "company": "Immersia", "city": "Levallois-Perret", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/82746683.html"}, {"found": "2026-10-01", "posted": "2026-09-26", "contract": "Alternance", "job": "IA générative", "matched": "IA générative", "title": "Alternant - Adoption IA Générative & Microsoft Copilot H/F", "company": "INTED GROUP (IEG)", "city": "Champs-sur-Marne", "country": "France", "remote": "", "salary": "1 867,02 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/82696864.html"}, {"found": "2026-10-01", "posted": "2026-09-24", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternant Intelligence Artificielle H/F", "company": "AHG Ateliers de la Haute Garonne", "city": "Flourens", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83714858.html"}, {"found": "2026-10-01", "posted": "2026-09-24", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternant en Acculturation et Déploiement de l'IA Souveraine de l'Assurance Maladie H/F", "company": "Lasecurecrute.fr", "city": "La Rochelle", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83735215.html"}, {"found": "2026-10-01", "posted": "2026-09-22", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance Chef de Projet Transformation IA et Processus - Créteil H/F", "company": "ISCOD", "city": "Créteil", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83651384.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance Développeur Full Stack & IA - Poucharramet H/F", "company": "ISCOD", "city": "Poucharramet", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83982262.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Alternance Transformation Digitale Data et Migration CRM - Montreuil H/F", "company": "ISCOD", "city": "Montreuil", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83982320.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Ingénieur Data - DevOps en Alternance H/F", "company": "LACROIXSAVAC", "city": "Paris", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83967596.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Alternance - Data Analyst H/F", "company": "MBWAY Lille", "city": "Marcq-en-Barœul", "country": "France", "remote": "", "salary": "504,10 - 1 867,02 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83966879.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data", "matched": "AI, Data", "title": "Alternance Data Analytics & ai H/F", "company": "Spie Operations", "city": "Cergy", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81913323.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Apprenti- Juriste Spécialisé en Intelligence Artificielle H/F", "company": "Direction Générale de la Gendarmerie Nationale", "city": "Issy-les-Moulineaux", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81910261.html"}, {"found": "2026-10-01", "posted": "2026-09-29", "contract": "Alternance", "job": "Data Engineer", "matched": "AI, Data Engineer", "title": "Alternance - Ai - Data Engineer - Data Factory - Mode - Septembre 2026 H/F", "company": "Chanel", "city": "Paris", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/79500408.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Alternance - Data Analyst - Lille - 59 H/F", "company": "Studi CFA", "city": "Lille", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/79653930.html"}, {"found": "2026-10-01", "posted": "2026-09-30", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Alternance Technicien Data - Data Management ERP - Signes H/F", "company": "ISCOD", "city": "Signes", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83914869.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Data Analyst - Analyste de Données H/F", "company": "Arseaa", "city": "Toulouse", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81910435.html"}, {"found": "2026-10-01", "posted": "2026-09-30", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Assistant Data en Alternance H/F", "company": "Agrial", "city": "Cesson-Sévigné", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81885765.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Purchasing Data Analyst Apprentice Job Purpose Key Responsibilities H/F", "company": "OPmobility", "city": "Levallois-Perret", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83960275.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Apprenti Data Engineer - Data Analyst H/F", "company": "Agence nationale de l'habitat", "city": "Paris", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81913270.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Apprenti Data Engineer H/F", "company": "Sga/Dtpm", "city": "Paris", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/79615924.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Alternance - Assistant Data Référentiel H/F", "company": "Hermes Sellier", "city": "Paris", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81911758.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Alternant-Chargé d'Études Data - Business H/F", "company": "Groupama Assurances Mutuelles", "city": "Paris", "country": "France", "remote": "", "salary": "1 200 - 2 000 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/79609794.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Alternance - Data Analyst Credit Risk H/F", "company": "Younited", "city": "Paris", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81912613.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Apprenti Analyste de Données - Data Analyst H/F", "company": "Agence nationale de traitement automatisé des infractions", "city": "Rennes", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81911690.html"}, {"found": "2026-10-01", "posted": "2026-09-29", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Data Engineer - en Alternance H/F", "company": "Carrefour", "city": "Massy", "country": "France", "remote": "", "salary": "1 200 € / mois", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83892083.html"}, {"found": "2026-10-01", "posted": "2026-09-29", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Data Specialist Junior H/F", "company": "Vulcain Engineering Group", "city": "Neuilly-sur-Seine", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (page directe)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/80733348.html"}, {"found": "2026-10-01", "posted": "2026-09-16", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance Software Engineer IA & Backend - Paris H/F", "company": "ISCOD", "city": "Paris", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83412637.html"}, {"found": "2026-10-01", "posted": "2026-09-15", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance Développeur - IA & Automatisation H/F", "company": "Docaret", "city": "Rueil-Malmaison", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81298068.html"}, {"found": "2026-10-01", "posted": "2026-09-15", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Vo2 Group - Alternance Recherche et Développement IA H/F", "company": "VO2 Group", "city": "Paris", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83405866.html"}, {"found": "2026-10-01", "posted": "2026-09-22", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance Robotisation et Intelligence Artificielle - Créteil H/F", "company": "ISCOD", "city": "Créteil", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83651319.html"}, {"found": "2026-10-01", "posted": "2026-09-15", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Spécialiste en Conception et Déploiement de Solutions IA - Alternance H/F", "company": "REDSUP", "city": "Clichy", "country": "France", "remote": "", "salary": "12,31 € / heure", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81315379.html"}, {"found": "2026-10-01", "posted": "2026-09-07", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance - Assistant IA et Transformation Digitale H/F", "company": "Studi CFA", "city": "Saint-Ouen-sur-Seine", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/79812074.html"}, {"found": "2026-10-01", "posted": "2026-09-16", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance Chef de Projet IA - Nanterre H/F", "company": "ISCOD", "city": "Nanterre", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83412616.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "CDI", "job": "Machine Learning", "matched": "Machine Learning", "title": "Open-Source Machine Learning Engineer - EMEA Remote H/F", "company": "Hugging Face", "city": "Paris", "country": "France", "remote": "Remote", "salary": "", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/79596906.html"}, {"found": "2026-10-01", "posted": "2026-09-30", "contract": "CDI", "job": "Machine Learning", "matched": "Machine Learning", "title": "Experienced Machine Learning Engineer - Spain Spanish Speaking H/F", "company": "Doctrine", "city": "Paris", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83921567.html"}, {"found": "2026-10-01", "posted": "2026-09-29", "contract": "CDI", "job": "Machine Learning", "matched": "IA, Machine Learning, MLOps", "title": "Machine Learning Engineer - Déploiement IA & MLOps H/F", "company": "Exalt Lyon", "city": "Lyon", "country": "France", "remote": "", "salary": "40 000 - 60 000 € / an", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83889088.html"}, {"found": "2026-10-01", "posted": "2026-09-29", "contract": "CDI", "job": "Machine Learning", "matched": "IA, Machine Learning", "title": "Ingénieur Machine Learning IA H/F", "company": "Aramis", "city": "Arcueil", "country": "France", "remote": "", "salary": "35 000 - 50 000 € / an", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83889876.html"}, {"found": "2026-10-01", "posted": "2026-09-26", "contract": "CDI", "job": "Machine Learning", "matched": "Machine Learning", "title": "Machine Learning Engineer H/F", "company": "Octime", "city": "Biron", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83786647.html"}, {"found": "2026-10-01", "posted": "2026-09-24", "contract": "CDI", "job": "Machine Learning", "matched": "Machine Learning", "title": "Machine Learning Engineer H/F", "company": "Ubisoft", "city": "Paris", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/74840944.html"}, {"found": "2026-10-01", "posted": "2026-09-24", "contract": "CDI", "job": "Machine Learning", "matched": "Machine Learning, Data Scientist, NLP", "title": "Machine Learning Engineer Data Scientist Nlp H/F", "company": "Octopus IT", "city": "Paris", "country": "France", "remote": "", "salary": "60 000 - 80 000 € / an", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83729876.html"}, {"found": "2026-10-01", "posted": "2026-09-23", "contract": "CDI", "job": "Machine Learning", "matched": "Machine Learning", "title": "Machine Learning Engineer H/F", "company": "Navalia Executive Search", "city": "Villeneuve-d'Ascq", "country": "France", "remote": "", "salary": "45 000 - 60 000 € / an", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83675765.html"}, {"found": "2026-10-01", "posted": "2026-09-26", "contract": "CDI", "job": "Machine Learning", "matched": "Machine Learning, MLOps", "title": "Ingénieur Machine Learning - MLOps H/F - Assystem", "company": "Assystem, super recruteur", "city": "", "country": "France", "remote": "", "salary": "35 000 - 53 000 € / an", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/79403942.html"}, {"found": "2026-10-01", "posted": "2026-09-24", "contract": "CDI", "job": "Machine Learning", "matched": "Machine Learning", "title": "Experienced - Senior Machine Learning Engineer - Squad Distribute H/F", "company": "Doctrine", "city": "Paris", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/77135689.html"}, {"found": "2026-10-01", "posted": "2026-09-24", "contract": "CDI", "job": "Machine Learning", "matched": "Machine Learning", "title": "Machine Learning Engineer Intern - Paris - January 2027 H/F", "company": "Pernod Ricard", "city": "Paris", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83702585.html"}, {"found": "2026-10-01", "posted": "2026-09-22", "contract": "CDI", "job": "Machine Learning", "matched": "Machine Learning", "title": "Machine Learning Engineer H/F", "company": "Klanik", "city": "Lille", "country": "France", "remote": "", "salary": "45 000 - 55 000 € / an", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83621429.html"}, {"found": "2026-10-01", "posted": "2026-09-23", "contract": "CDI", "job": "Machine Learning", "matched": "Machine Learning", "title": "Senior Machine Learning Engineer - M - W H/F", "company": "Manomano", "city": "Paris", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83657536.html"}, {"found": "2026-10-01", "posted": "2026-09-25", "contract": "CDI", "job": "AI", "matched": "AI, Machine Learning", "title": "Ai - Ml Engineer H/F", "company": "Bluethink", "city": "Paris", "country": "France", "remote": "", "salary": "65 000 - 85 000 € / an", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83765970.html"}, {"found": "2026-10-01", "posted": "2026-09-23", "contract": "CDI", "job": "Machine Learning", "matched": "Machine Learning", "title": "Ingénieur Machine Learning Senior H/F", "company": "The Human Link", "city": "Aix-en-Provence", "country": "France", "remote": "", "salary": "40 000 - 55 000 € / an", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83681854.html"}, {"found": "2026-10-01", "posted": "2026-09-25", "contract": "CDI", "job": "AI", "matched": "AI, Machine Learning", "title": "Senior Ai - Ml Engineer H/F", "company": "Artefact", "city": "Paris", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83755356.html"}, {"found": "2026-10-01", "posted": "2026-08-31", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Offre Emploi Alternance Développeur IA Python Paris (75)", "company": "", "city": "Paris", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "Google", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81928437.html"}, {"found": "2026-10-01", "posted": "2026-09-17", "contract": "Alternance", "job": "Machine Learning", "matched": "Machine Learning", "title": "Alternant Machine Learning Engineer", "company": "", "city": "", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "Google", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81401230.html"}, {"found": "2026-10-01", "posted": "", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Data Engineer Junior - Alternance H/F Digital School of Paris", "company": "", "city": "Paris", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "Google", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/79509182.html"}, {"found": "2026-10-01", "posted": "2026-09-03", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternant Robotisation et Intelligence Artificielle H/F Elior", "company": "", "city": "", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "Google", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/82988263.html"}, {"found": "2026-10-01", "posted": "", "contract": "Alternance", "job": "Data Scientist", "matched": "IA, Data Scientist", "title": "Data Scientist en Alternance - IA & Data Science - Orano-2", "company": "Orano 2", "city": "", "country": "France", "remote": "", "salary": "", "site": "L'Etudiant", "source": "Google", "status": "", "notes": "", "url": "https://jobs-stages.letudiant.fr/entreprises/orano-2/offres/data-scientist-en-alternance-ia-data-science-chatillon-france"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "CDI", "job": "Machine Learning", "matched": "Machine Learning, Data Scientist", "title": "Data Scientist - Machine Learning H/F", "company": "Techteam", "city": "Saint-Étienne", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83965808.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "CDI", "job": "Machine Learning", "matched": "Machine Learning, Data", "title": "DevOps - Data & Machine Learning H/F - Celad", "company": "Celad, super recruteur", "city": "", "country": "France", "remote": "", "salary": "40 000 - 48 000 € / an", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83967063.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "CDI", "job": "Data Scientist", "matched": "Data Scientist", "title": "Data Scientist Confirmé H/F", "company": "CGI", "city": "Paris", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83985306.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "CDI", "job": "IA", "matched": "IA", "title": "Architecte Infrastructure IA H/F", "company": "Accenture France", "city": "Paris", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83981943.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "CDD", "job": "IA", "matched": "IA", "title": "Post-Doctorant·e en Intelligence Artificielle Informée par la Physique pour la Modélisation Hydrogéologique - CDD - Imt Mines Alès H/F", "company": "IMT Mines Alès", "city": "Alès", "country": "France", "remote": "", "salary": "35 542 € / an", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83981243.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "CDD", "job": "Data Scientist", "matched": "Data Scientist", "title": "CDD - Data Scientist H/F - Crédit Agricole d'Ile de France", "company": "Crédit Agricole d'Ile de France, super recruteur", "city": "", "country": "France", "remote": "", "salary": "36 000 € / an", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83977728.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "CDI", "job": "Machine Learning", "matched": "Machine Learning, Data Engineer", "title": "Data Engineer - Machine Learning - # H/F", "company": "Astek", "city": "Lille", "country": "France", "remote": "", "salary": "35 000 € / an", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/68479261.html"}, {"found": "2026-10-01", "posted": "2026-09-24", "contract": "Alternance", "job": "Data Scientist", "matched": "Data Scientist", "title": "Apprenti Data Scientist H/F", "company": "Sga/Dtpm", "city": "Paris", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/78302514.html"}, {"found": "2026-10-01", "posted": "2026-09-24", "contract": "Alternance", "job": "Data Scientist", "matched": "Data Scientist", "title": "Apprenti - Data Scientist Appliqué à la Vision par Ordinateur H/F", "company": "Agence du numérique des forces de sécurité intérieure - ANFSI", "city": "Issy-les-Moulineaux", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/78301439.html"}, {"found": "2026-10-01", "posted": "2026-09-20", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "Alternance Data & Tech International - Levallois-Perret H/F", "company": "ISCOD", "city": "Levallois-Perret", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/82508635.html"}, {"found": "2026-10-01", "posted": "2026-09-15", "contract": "Alternance", "job": "Data Scientist", "matched": "IA, Data Scientist", "title": "Alternant Développement IA & Data Scientist H/F", "company": "Aubert & Duval", "city": "Les Ancizes-Comps", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83401742.html"}, {"found": "2026-10-01", "posted": "2026-09-15", "contract": "Alternance", "job": "Data Scientist", "matched": "Data Scientist", "title": "Data Scientist H/F", "company": "MI Secrétariat général", "city": "Paris", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81297372.html"}, {"found": "2026-10-01", "posted": "2026-09-15", "contract": "Alternance", "job": "Data", "matched": "IA, Data", "title": "Apprenti Data IA H/F", "company": "Etat-major des armées", "city": "Paris", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81303451.html"}, {"found": "2026-10-01", "posted": "2026-09-04", "contract": "Alternance", "job": "Data Scientist", "matched": "Data Scientist", "title": "Data Scientist - Santé Numérique Alternance H/F", "company": "aivancity", "city": "Nice", "country": "France", "remote": "", "salary": "2 958 € / mois", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83032366.html"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "IA générative", "matched": "IA générative, NLP", "title": "Apprenti·e Ingénieur·e Nlp & IA Générative H/F", "company": "Aix-Marseille Université", "city": "Marseille", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (liste via Google)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81912973.html"}, {"found": "2026-10-01", "posted": "", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Apprenti·e Data Engineer H/F H3 Campus", "company": "", "city": "", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "Google", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/78828866.html"}, {"found": "2026-10-01", "posted": "2026-09-28", "contract": "Alternance", "job": "Data", "matched": "Data", "title": "ASSISTANT(E) BUSINESS DATA ANALYST H/F - Omnicom ...", "company": "Omnicom Media", "city": "Boulogne-Billancourt", "country": "France", "remote": "", "salary": "", "site": "Welcome to the Jungle", "source": "Google", "status": "", "notes": "", "url": "https://www.welcometothejungle.com/fr/companies/omnicom-media/jobs/alternance-assistant-e-business-data-analyst-h-f_boulogne-billancourt"}, {"found": "2026-10-01", "posted": "2026-09-25", "contract": "CDI", "job": "Ingénieur IA", "matched": "Ingénieur IA", "title": "AI Engineer - Société Générale - CDI à La Défense", "company": "Societe Generale", "city": "yMVpdM2", "country": "France", "remote": "", "salary": "", "site": "Welcome to the Jungle", "source": "Google", "status": "", "notes": "", "url": "https://www.welcometothejungle.com/fr/companies/societe-generale/jobs/ai-engineer_la-defense_SG_yMVpdM2"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternance chargé(e) de Projet IA RH F/H", "company": "", "city": "La Défense", "country": "France", "remote": "", "salary": "", "site": "JobTeaser", "source": "Google", "status": "", "notes": "", "url": "https://www.jobteaser.com/fr/job-offers/b1191842-4623-4c9b-8148-38d9c612daa5-vinci-concessions-alternance-charge-e-de-projet-ia-rh-f-h"}, {"found": "2026-10-01", "posted": "2026-10-01", "contract": "Alternance", "job": "IA", "matched": "IA", "title": "Alternnat Programme IA H/F", "company": "", "city": "", "country": "France", "remote": "Hybride", "salary": "", "site": "JobTeaser", "source": "Google", "status": "", "notes": "", "url": "https://www.jobteaser.com/fr/job-offers/fec0e2b3-fa32-402e-9a9e-1f1c81a5b85e-mutuelle-nationale-des-hospitaliers-mnh-alternnat-programme-ia-h-f"}, {"found": "2026-10-01", "posted": "2026-09-08", "contract": "Alternance", "job": "Data", "matched": "IA, Data", "title": "Data Analyst - IA H/F", "company": "Docaposte", "city": "Ivry-sur-Seine", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (offres similaires)", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83145709.html"}, {"found": "2026-10-01", "posted": "2026-09-30", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Data Engineer - Alternance H/F", "company": "Kaischool", "city": "Fontenay-sous-Bois", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe): France - Data Engineer", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83915746.html"}, {"found": "2026-10-01", "posted": "2026-09-20", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Alternance - Data Engineer H/F", "company": "Studi CFA", "city": "Lyon", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe): France - Data Engineer", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/79167965.html"}, {"found": "2026-10-01", "posted": "2026-09-18", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Alternance - Data Engineer - Bac+4 - +5 H/F", "company": "Sup de Vinci", "city": "Nantes", "country": "France", "remote": "", "salary": "1 867,02 € / mois", "site": "HelloWork", "source": "HelloWork (page directe): France - Data Engineer", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83535892.html"}, {"found": "2026-10-01", "posted": "2026-09-17", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Alternant Data Engineer H/F", "company": "NEXA Digital School", "city": "Bordeaux", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (page directe): France - Data Engineer", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81396431.html"}, {"found": "2026-10-01", "posted": "2026-09-15", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Alternant·e Data Engineer Toulouse H/F", "company": "ILEK", "city": "Toulouse", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe): France - Data Engineer", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/81302756.html"}, {"found": "2026-10-01", "posted": "2026-09-14", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Apprenti Data Engineer H/F", "company": "Siège de l'AP-HP", "city": "Paris", "country": "France", "remote": "", "salary": "5 000 - 22 000 € / an", "site": "HelloWork", "source": "HelloWork (page directe): France - Data Engineer", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/79044915.html"}, {"found": "2026-10-01", "posted": "2026-09-08", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Data Engineer Junior - Alternance H/F", "company": "Digital School of Paris", "city": "Levallois-Perret", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (page directe): France - Data Engineer", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/79903982.html"}, {"found": "2026-10-01", "posted": "2026-09-04", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Data Engineer - Alternance H/F", "company": "aivancity", "city": "Villejuif", "country": "France", "remote": "", "salary": "954,50 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe): France - Data Engineer", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83032311.html"}, {"found": "2026-10-01", "posted": "2026-09-04", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Data Engineer - Conseil Alternance H/F", "company": "aivancity", "city": "Villejuif", "country": "France", "remote": "", "salary": "954,50 - 1 801,80 € / mois", "site": "HelloWork", "source": "HelloWork (page directe): France - Data Engineer", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83032433.html"}, {"found": "2026-10-01", "posted": "2026-09-04", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Data Engineer - BTP Alternance H/F", "company": "aivancity", "city": "Villejuif", "country": "France", "remote": "", "salary": "954,50 - 1 801,80 € / mois", "site": "HelloWork", "source": "HelloWork (page directe): France - Data Engineer", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83032420.html"}, {"found": "2026-10-01", "posted": "2026-09-04", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Data Engineer - Aéronautique Alternance H/F", "company": "aivancity", "city": "Villejuif", "country": "France", "remote": "", "salary": "954,50 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe): France - Data Engineer", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83032331.html"}, {"found": "2026-10-01", "posted": "2026-09-04", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Data Engineer - Finance Alternance H/F", "company": "aivancity", "city": "Villejuif", "country": "France", "remote": "", "salary": "954,50 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe): France - Data Engineer", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83032305.html"}, {"found": "2026-10-01", "posted": "2026-09-02", "contract": "Alternance", "job": "Data Engineer", "matched": "Data Engineer", "title": "Alternance - Data Engineer - Montpellier H/F", "company": "EPSI Montpellier", "city": "Montpellier", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "HelloWork (page directe): France - Data Engineer", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/82958999.html"}, {"found": "2026-10-01", "posted": "2026-09-22", "contract": "Alternance", "job": "Data Engineer", "matched": "IA, Data Engineer", "title": "Alternance Data Engineer IA & Monitoring - Aix-En-Provence H/F", "company": "ISCOD", "city": "Aix-en-Provence", "country": "France", "remote": "", "salary": "492,22 - 1 823,03 € / mois", "site": "HelloWork", "source": "HelloWork (page directe): France - Data Engineer", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83651352.html"}, {"found": "2026-10-01", "posted": "2026-09-16", "contract": "CDI", "job": "MLOps", "matched": "MLOps", "title": "Offre Emploi CDI Ingénieur MLOps Strasbourg (67)", "company": "", "city": "Strasbourg", "country": "France", "remote": "", "salary": "", "site": "HelloWork", "source": "Google", "status": "", "notes": "", "url": "https://www.hellowork.com/fr-fr/emplois/83447637.html"}]}</script>
+<script>
+(function () {
+  "use strict";
+  let DATA;
+  try {
+    DATA = JSON.parse(document.getElementById("data").textContent);
+  } catch (e) {
+    // Opened the template itself (data token not filled in) or the data is corrupt
+    document.getElementById("count").textContent =
+      "No data: this file is the template. Run “python3 jobs.py” (or --html-only) and open reports/offers.html.";
+    return;
+  }
+  const NONE = "—";
+  const STORE = "job-offers-sort";
+
+  // Facets: field shown in the sidebar. "job" filters on every matched title.
+  const FACETS = [
+    { key: "_prio", label: "Priority" },
+    { key: "contract", label: "Contract" },
+    { key: "job", label: "Job title" },
+    { key: "city", label: "City", search: true },
+    { key: "country", label: "Country" },
+    { key: "remote", label: "Remote work" },
+    { key: "site", label: "Site" },
+    { key: "source", label: "Source" },
+    { key: "company", label: "Company", search: true },
+    { key: "status", label: "Status" },
+  ];
+  const COLUMNS = [
+    { key: "found", label: "Found" },
+    { key: "posted", label: "Published" },
+    { key: "contract", label: "Contract" },
+    { key: "job", label: "Job title" },
+    { key: "title", label: "Offer" },
+    { key: "company", label: "Company" },
+    { key: "city", label: "City" },
+    { key: "remote", label: "Remote" },
+    { key: "salary", label: "Salary" },
+    { key: "site", label: "Site" },
+    { key: "status", label: "Status" },
+  ];
+
+  // Data values (contract, remote, source, ...) are shown exactly as jobs.py stores
+  // them in offers.csv, in French; only the interface itself is in English.
+  function display(key, v) {
+    return v || NONE;
+  }
+
+  // Same normalisation as jobs.py norm(): accents, case and punctuation ignored
+  const normCity = s => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const PRIORITY = new Set((DATA.priority_cities || []).map(normCity));
+  const PRIO_YES = "★ Priority city", PRIO_NO = "Other cities";
+  const ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+  const offers = DATA.offers.map(o => {
+    // "," normally; ";" too in case a spreadsheet rewrote the separator
+    const jobs = (o.matched || o.job || "").split(/[,;]/).map(s => s.trim()).filter(Boolean);
+    const text = [o.title, o.company, o.city, o.country, o.site, o.source, o.matched, o.notes, o.status]
+      .join(" ").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    const prio = PRIORITY.has(normCity(o.city));
+    return Object.assign({}, o, {
+      _jobs: jobs.length ? jobs : [NONE], _text: text, _isPrio: prio, _prio: prio ? PRIO_YES : PRIO_NO,
+      // posted is ISO when jobs.py could parse Google's/HelloWork's date, else raw text or empty
+      _postedIso: ISO.test(o.posted || "") ? o.posted : "",
+    });
+  });
+
+  // Facet values for one offer (arrays so "job" can hold several)
+  function values(o, key) {
+    if (key === "job") return o._jobs;
+    return [o[key] || NONE];
+  }
+
+  // Preferred ordering of facet values, then by count
+  const ORDER = { contract: DATA.contracts, job: DATA.titles, _prio: [PRIO_YES, PRIO_NO] };
+
+  // Every visit starts unfiltered (all offers shown). Only the column sort is
+  // remembered between visits; filters last for the current visit only.
+  let state = { q: "", found: "", posted: "", sel: {}, sort: { key: "found", dir: -1 }, facetQ: {} };
+  try {
+    localStorage.removeItem("job-offers-filters");  // older versions saved the filters too
+    const saved = JSON.parse(localStorage.getItem(STORE) || "null");
+    if (saved && saved.sort && COLUMNS.some(c => c.key === saved.sort.key)) state.sort = saved.sort;
+  } catch (e) { /* storage unavailable: start with defaults */ }
+  FACETS.forEach(f => { state.sel[f.key] = new Set(); });
+
+  function save() {
+    try {
+      localStorage.setItem(STORE, JSON.stringify({ sort: state.sort }));
+    } catch (e) { /* ignore */ }
+  }
+
+  function daysAgo(iso) {
+    const d = new Date(iso + "T00:00:00"), t = new Date(DATA.today + "T00:00:00");
+    return Math.round((t - d) / 86400000);
+  }
+
+  // Does an offer pass every filter, optionally ignoring one facet (for counts)?
+  function passes(o, skipFacet) {
+    if (state.q) {
+      const words = state.q.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").split(/\s+/).filter(Boolean);
+      if (!words.every(w => o._text.includes(w))) return false;
+    }
+    if (state.found !== "" && !(o.found && daysAgo(o.found) <= Number(state.found))) return false;
+    if (state.posted === "unknown") {
+      if (o._postedIso) return false;
+    } else if (state.posted !== "") {
+      if (!o._postedIso || daysAgo(o._postedIso) > Number(state.posted)) return false;
+    }
+    for (const f of FACETS) {
+      if (f.key === skipFacet) continue;
+      const sel = state.sel[f.key];
+      if (sel.size && !values(o, f.key).some(v => sel.has(v))) return false;
+    }
+    return true;
+  }
+
+  function el(tag, attrs, children) {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (k === "class") n.className = v;
+      else if (k === "text") n.textContent = v;
+      else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+      else n.setAttribute(k, v);
+    }
+    (children || []).forEach(c => c && n.appendChild(typeof c === "string" ? document.createTextNode(c) : c));
+    return n;
+  }
+
+  function renderFacets() {
+    const root = document.getElementById("facets");
+    root.replaceChildren();
+    for (const f of FACETS) {
+      // Counts reflect all other active filters, so you see what selecting a value would give
+      const counts = new Map();
+      const all = new Set();
+      offers.forEach(o => values(o, f.key).forEach(v => all.add(v)));
+      offers.filter(o => passes(o, f.key)).forEach(o => values(o, f.key).forEach(v => counts.set(v, (counts.get(v) || 0) + 1)));
+      if (all.size <= 1 && !state.sel[f.key].size) continue;  // nothing to choose from
+
+      const order = ORDER[f.key] || [];
+      let vals = [...all].sort((a, b) => {
+        const ia = order.indexOf(a), ib = order.indexOf(b);
+        if (ia !== -1 || ib !== -1) return (ia === -1 ? 1e9 : ia) - (ib === -1 ? 1e9 : ib);
+        if (a === NONE) return 1;
+        if (b === NONE) return -1;
+        return (counts.get(b) || 0) - (counts.get(a) || 0) || a.localeCompare(b, "fr");
+      });
+      const fq = (state.facetQ[f.key] || "").toLowerCase();
+      if (fq) vals = vals.filter(v => display(f.key, v).toLowerCase().includes(fq));
+
+      const list = el("div", { class: "facet" }, vals.map(v => {
+        const n = counts.get(v) || 0;
+        const cb = el("input", { type: "checkbox" });
+        cb.checked = state.sel[f.key].has(v);
+        cb.addEventListener("change", () => {
+          cb.checked ? state.sel[f.key].add(v) : state.sel[f.key].delete(v);
+          render();
+        });
+        const label = display(f.key, v);
+        return el("label", { class: n ? "" : "zero" }, [
+          cb, el("span", { class: "name", text: label, title: label }), el("span", { class: "count", text: String(n) }),
+        ]);
+      }));
+
+      const clear = state.sel[f.key].size
+        ? el("button", { text: "clear", onclick: () => { state.sel[f.key].clear(); render(); } })
+        : null;
+      const search = f.search
+        ? el("input", { type: "search", class: "facet-search", placeholder: "Filter…", value: state.facetQ[f.key] || "" })
+        : null;
+      if (search) {
+        search.addEventListener("input", () => {
+          state.facetQ[f.key] = search.value;
+          renderFacets();
+          const again = document.querySelector(`[data-facet="${f.key}"] .facet-search`);
+          if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+        });
+      }
+      root.appendChild(el("div", { class: "box", "data-facet": f.key }, [
+        el("h3", {}, [f.label, clear]), search, list,
+      ]));
+    }
+  }
+
+  function renderChips() {
+    const root = document.getElementById("chips");
+    root.replaceChildren();
+    const selects = [
+      ["posted", "Published", document.getElementById("posted")],
+      ["found", "Found", document.getElementById("found")],
+    ];
+    for (const [key, label, select] of selects) {
+      if (state[key] === "") continue;
+      const text = select.options[select.selectedIndex] ? select.options[select.selectedIndex].text : state[key];
+      root.appendChild(el("button", {
+        class: "chip", text: `${label}: ${text} ✕`,
+        onclick: () => { state[key] = ""; select.value = ""; render(); },
+      }));
+    }
+    for (const f of FACETS) {
+      for (const v of state.sel[f.key]) {
+        root.appendChild(el("button", {
+          class: "chip", text: `${f.label}: ${display(f.key, v)} ✕`,
+          onclick: () => { state.sel[f.key].delete(v); render(); },
+        }));
+      }
+    }
+  }
+
+  function badge(contract) {
+    const known = ["Alternance", "Stage", "CDI"].includes(contract);
+    return el("span", { class: "badge " + (known ? "b-" + contract : "b-other"), text: display("contract", contract) });
+  }
+
+  function renderHead() {
+    const head = document.getElementById("head");
+    head.replaceChildren(...COLUMNS.map(c => {
+      const arrow = state.sort.key === c.key ? (state.sort.dir > 0 ? " ▲" : " ▼") : "";
+      return el("th", {
+        class: state.sort.key === c.key ? "sorted" : "", text: c.label + arrow,
+        onclick: () => {
+          state.sort = state.sort.key === c.key ? { key: c.key, dir: -state.sort.dir } : { key: c.key, dir: c.key === "found" || c.key === "posted" ? -1 : 1 };
+          render();
+        },
+      });
+    }));
+  }
+
+  function renderRows(list) {
+    const { key, dir } = state.sort;
+    // Sort published dates on the parsed ISO value; unparsed text sorts as empty (last)
+    const sortVal = (o) => key === "posted" ? o._postedIso : (o[key] || "");
+    list.sort((a, b) => {
+      // Priority-city offers always on top, then the chosen column
+      if (a._isPrio !== b._isPrio) return a._isPrio ? -1 : 1;
+      const va = sortVal(a), vb = sortVal(b);
+      if (!va && vb) return 1;   // empty values always last
+      if (va && !vb) return -1;
+      return dir * va.localeCompare(vb, "fr") || (b.found || "").localeCompare(a.found || "");
+    });
+    const body = document.getElementById("rows");
+    body.replaceChildren(...list.map(o => {
+      const link = /^https?:\/\//.test(o.url || "")
+        ? el("a", { href: o.url, target: "_blank", rel: "noopener noreferrer", text: o.title || o.url })
+        : el("span", { text: o.title || NONE });
+      const isNew = o.found === DATA.today ? el("span", { class: "new", text: "NEW" }) : null;
+      const sub = o.notes ? el("div", { class: "sub", text: o.notes }) : null;
+      const cell = (v, cls) => el("td", { class: cls || "", text: v || NONE });
+      return el("tr", {}, [
+        el("td", { class: "nowrap" }, [o.found || NONE, isNew]),
+        cell(o.posted, "nowrap muted"),
+        el("td", {}, [badge(o.contract)]),
+        cell(o.job),
+        el("td", { class: "title" }, [link, sub]),
+        cell(o.company),
+        cell((o._isPrio ? "★ " : "") + (o.city || NONE), o._isPrio ? "prio" : ""),
+        cell(display("remote", o.remote), "muted"),
+        cell(o.salary, "nowrap"),
+        cell(o.site, "muted"),
+        cell(o.status),
+      ]);
+    }));
+    document.getElementById("empty").hidden = list.length > 0;
+  }
+
+  function render() {
+    const list = offers.filter(o => passes(o));
+    const fresh = offers.filter(o => o.found === DATA.today).length;
+    document.getElementById("count").textContent = `${list.length} / ${offers.length} offers`;
+    document.getElementById("meta").textContent =
+      `${offers.length} offers tracked · ${offers.filter(o => o._isPrio).length} ★ in priority cities · ` +
+      `${fresh} new today · generated ${DATA.generated}`;
+    renderFacets();
+    renderChips();
+    renderHead();
+    renderRows(list);
+    save();
+  }
+
+  const q = document.getElementById("q");
+  const found = document.getElementById("found");
+  const posted = document.getElementById("posted");
+  q.value = state.q;
+  found.value = state.found;
+  posted.value = state.posted;
+  q.addEventListener("input", () => { state.q = q.value.trim(); render(); });
+  found.addEventListener("change", () => { state.found = found.value; render(); });
+  posted.addEventListener("change", () => { state.posted = posted.value; render(); });
+  document.getElementById("reset").addEventListener("click", () => {
+    state.q = ""; state.found = ""; state.posted = "";
+    q.value = ""; found.value = ""; posted.value = "";
+    FACETS.forEach(f => state.sel[f.key].clear());
+    state.facetQ = {};
+    render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
