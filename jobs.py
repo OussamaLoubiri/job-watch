@@ -31,7 +31,10 @@ Run:
     python3 jobs.py                     # uses jobs_config.toml next to the script
     python3 jobs.py other_config.toml   # or another config file
     python3 jobs.py --only hellowork    # only sites whose name contains "hellowork"
+    python3 jobs.py --free              # 0 credits: only the HelloWork pages, no Google searches
     python3 jobs.py --html-only         # rebuild reports/offers.html, no searches
+    python3 jobs.py --serve             # tracker in the browser; Applied / Not interested
+                                        # buttons save to offers.csv (Windows: py jobs.py --serve)
 """
 
 import argparse
@@ -40,12 +43,15 @@ import html
 import json
 import os
 import re
+import secrets
 import sys
 import time
 import tomllib
 import unicodedata
+import webbrowser
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -64,7 +70,7 @@ SERPER_URL = "https://google.serper.dev/search"
 
 CSV_FIELDS = [
     "found", "posted", "contract", "job", "matched", "title", "company", "city",
-    "country", "remote", "salary", "site", "source", "status", "notes", "url",
+    "country", "remote", "salary", "site", "source", "status", "applied_on", "notes", "url",
 ]
 
 # Direct page fetches (HelloWork expansion) identify themselves honestly
@@ -119,12 +125,15 @@ def date_filter(days: int) -> str:
     return "" if days == 0 else "qdr:d" if days == 1 else f"qdr:d{days}"
 
 
-def load_config(path: Path) -> dict:
+def load_config(path: Path, require_key: bool = True) -> dict:
+    # require_key=False for the modes that never call Serper (--free, --serve, --html-only)
     with path.open("rb") as f:
         cfg = tomllib.load(f)
 
     api_key = str(cfg.get("api_key", "")).strip()
-    if not api_key or api_key == "PUT-YOUR-SERPER-KEY-HERE":
+    if api_key == "PUT-YOUR-SERPER-KEY-HERE":
+        api_key = ""
+    if require_key and not api_key:
         raise ValueError(f"set api_key in {path}")
 
     days = int(cfg.get("days", 7))
@@ -458,10 +467,19 @@ def load_offers() -> tuple[list[dict], list[str], str]:
 
 
 def save_offers(rows: list[dict], fields: list[str], delim: str) -> None:
-    with OFFERS_CSV.open("w", encoding="utf-8-sig", newline="") as f:
+    """Write offers.csv atomically: write a temp file next to it, then swap it in, so a
+    crash can never leave a half-written tracker. os.replace raises PermissionError
+    on Windows when the file is open (locked) in Excel; callers report that."""
+    tmp = OFFERS_CSV.with_name(OFFERS_CSV.name + ".tmp")
+    with tmp.open("w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fields, delimiter=delim, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
+    try:
+        os.replace(tmp, OFFERS_CSV)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def sort_offers(offers: list[dict], titles: list[str]) -> list[dict]:
@@ -522,23 +540,29 @@ def text_report(new: list[dict], titles: list[str], today: str, priority_cities:
     return "\n".join(lines)
 
 
-def write_html(rows: list[dict], cfg: dict, today: str) -> Path | None:
-    if not HTML_TEMPLATE.exists():
-        print(f"Warning: {HTML_TEMPLATE.name} missing, HTML report skipped.", file=sys.stderr)
-        return None
+def build_html(rows: list[dict], cfg: dict, today: str, token: str | None = None) -> str:
+    """Fill the template with the offers. token is set only when served by --serve:
+    it turns on the Applied / Not interested buttons (and authorises their requests)."""
     data = {
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "today": today,
         "titles": cfg["titles"],
         "contracts": CONTRACT_ORDER,
         "priority_cities": cfg["priority_cities"],
+        "server": {"token": token} if token else None,
         "offers": rows,
     }
     # "</" escaped so an offer title can never close the <script> tag
     payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
-    html = HTML_TEMPLATE.read_text(encoding="utf-8").replace("__OFFERS_DATA__", payload)
+    return HTML_TEMPLATE.read_text(encoding="utf-8").replace("__OFFERS_DATA__", payload)
+
+
+def write_html(rows: list[dict], cfg: dict, today: str) -> Path | None:
+    if not HTML_TEMPLATE.exists():
+        print(f"Warning: {HTML_TEMPLATE.name} missing, HTML report skipped.", file=sys.stderr)
+        return None
     out = REPORT_DIR / "offers.html"
-    out.write_text(html, encoding="utf-8")
+    out.write_text(build_html(rows, cfg, today), encoding="utf-8")
     return out
 
 
@@ -575,6 +599,129 @@ def send_telegram(text: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Local server (--serve): the HTML page's Applied / Not interested buttons write
+# straight into offers.csv. Standard library only; works on Linux, macOS, Windows.
+# ---------------------------------------------------------------------------
+
+# Statuses the page's buttons set. Other values typed by hand in the CSV are kept.
+STATUS_APPLIED = "applied"
+STATUS_NOT_INTERESTED = "not interested"
+BUTTON_STATUSES = {STATUS_APPLIED, STATUS_NOT_INTERESTED, ""}
+
+
+def set_offer_status(url: str, status: str, today: str) -> dict:
+    """Set status (and applied_on) of the offer with this URL in offers.csv.
+    Re-reads the file each time, so edits made in a spreadsheet meanwhile are kept.
+    Raises KeyError if the offer isn't in the tracker."""
+    rows, fields, delim = load_offers()
+    key = offer_key(url)
+    row = next((r for r in rows if offer_key(r.get("url", "")) == key), None)
+    if row is None:
+        raise KeyError(url)
+    row["status"] = status
+    if status == STATUS_APPLIED:
+        row["applied_on"] = row.get("applied_on") or today
+    elif status == "":
+        row["applied_on"] = ""
+    save_offers(rows, fields, delim)
+    return {"status": row["status"], "applied_on": row.get("applied_on", "")}
+
+
+def make_handler(cfg: dict, token: str, port: int):
+    allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+
+    class Handler(BaseHTTPRequestHandler):
+        def send_json(self, code: int, obj: dict) -> None:
+            body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def host_ok(self) -> bool:
+            # Refuse requests addressed to any other host name (DNS-rebinding guard)
+            return self.headers.get("Host", "") in allowed_hosts
+
+        def do_GET(self):
+            if not self.host_ok():
+                return self.send_json(403, {"error": "wrong host"})
+            if urlparse(self.path).path not in ("/", "/index.html"):
+                return self.send_json(404, {"error": "not found"})
+            # Built fresh from offers.csv on every load, so it always shows the saved state
+            rows, _, _ = load_offers()
+            rematch_rows(rows, cfg)
+            page = build_html(rows, cfg, date.today().isoformat(), token).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(page)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(page)
+
+        def do_POST(self):
+            if not self.host_ok():
+                return self.send_json(403, {"error": "wrong host"})
+            if urlparse(self.path).path != "/api/status":
+                return self.send_json(404, {"error": "not found"})
+            # The token is sent in a custom header: other websites can't read it from
+            # the page, and browsers won't let them set custom headers cross-site
+            # without a CORS preflight, which this server never approves.
+            if not secrets.compare_digest(self.headers.get("X-Token", ""), token):
+                return self.send_json(403, {"error": "bad token - reload the page"})
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                req = json.loads(self.rfile.read(min(length, 10_000)) or b"{}")
+                url, status = str(req["url"]), str(req["status"])
+            except (ValueError, KeyError, TypeError):
+                return self.send_json(400, {"error": "expected JSON {url, status}"})
+            if status not in BUTTON_STATUSES:
+                return self.send_json(400, {"error": f"status must be one of {sorted(BUTTON_STATUSES)}"})
+            try:
+                result = set_offer_status(url, status, date.today().isoformat())
+            except KeyError:
+                return self.send_json(404, {"error": "offer not found in offers.csv"})
+            except PermissionError:
+                return self.send_json(409, {"error": f"{OFFERS_CSV.name} is locked - is it open in Excel? "
+                                                     "Close it and click again."})
+            except OSError as e:
+                return self.send_json(500, {"error": f"could not save {OFFERS_CSV.name}: {e}"})
+            print(f"  {status or 'reset':15} {url}", file=sys.stderr)
+            self.send_json(200, {"ok": True, **result})
+
+        def log_message(self, fmt, *args):
+            pass  # status changes are printed above; skip per-request access logs
+
+    return Handler
+
+
+def serve(cfg: dict, port: int, open_browser: bool = True) -> int:
+    if not HTML_TEMPLATE.exists():
+        print(f"Error: {HTML_TEMPLATE.name} missing.", file=sys.stderr)
+        return 1
+    token = secrets.token_urlsafe(24)
+    try:
+        # 127.0.0.1 only: reachable from this machine, never from the network
+        httpd = HTTPServer(("127.0.0.1", port), make_handler(cfg, token, port))
+    except OSError as e:
+        print(f"Error: can't listen on 127.0.0.1:{port} ({e}). Try another --port.", file=sys.stderr)
+        return 1
+    url = f"http://127.0.0.1:{port}/"
+    print(f"Serving the job tracker at {url}  (Ctrl+C to stop)", file=sys.stderr)
+    print(f"Changes are saved to {OFFERS_CSV}", file=sys.stderr)
+    if open_browser:
+        webbrowser.open(url)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopped.", file=sys.stderr)
+    finally:
+        httpd.server_close()
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -586,6 +733,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--html-only", action="store_true",
                    help="no searches, no page reads: just rebuild reports/offers.html from offers.csv "
                         "(after editing report_template.html, statuses or matching rules)")
+    p.add_argument("--serve", action="store_true",
+                   help="open the tracker in your browser through a local server (127.0.0.1 only) so the "
+                        "Applied / Not interested buttons save to offers.csv; Ctrl+C to stop. No searches.")
+    p.add_argument("--port", type=int, default=8765, help="port for --serve (default 8765)")
+    p.add_argument("--no-browser", action="store_true", help="with --serve: don't open the browser automatically")
+    p.add_argument("--free", action="store_true",
+                   help="0 Serper credits: skip all Google searches, read only the [[hellowork_pages]] "
+                        "directly; same filters, tracker and reports as a normal run")
     return p.parse_args()
 
 
@@ -679,7 +834,7 @@ def expand_pages(queue: list, pending: dict, known: set, new: list, stats: dict,
 def main() -> int:
     args = parse_args()
     try:
-        cfg = load_config(args.config)
+        cfg = load_config(args.config, require_key=not (args.free or args.serve or args.html_only))
     except (OSError, tomllib.TOMLDecodeError, ValueError, re.error) as e:
         print(f"Error in config {args.config}: {e}", file=sys.stderr)
         return 1
@@ -688,6 +843,9 @@ def main() -> int:
         if not cfg["sites"]:
             print(f"Error: no site name contains {args.only!r}", file=sys.stderr)
             return 1
+
+    if args.serve:
+        return serve(cfg, args.port, open_browser=not args.no_browser)
 
     if args.html_only:
         # Offline: no Serper credits, no requests to job sites
@@ -701,8 +859,20 @@ def main() -> int:
             print(f"HTML report rebuilt from {OFFERS_CSV.name} ({len(rows)} offers): {html_path}", file=sys.stderr)
         return 0
 
-    searches = build_searches(cfg)
-    print(f"Running {len(searches)} searches (1 Serper credit each)...", file=sys.stderr)
+    if args.free:
+        # No Serper searches at all: only the [[hellowork_pages]] read directly. Same
+        # filters, dedup, expiry check, tracker and reports as a normal run.
+        cfg["sites"] = [s for s in cfg["sites"] if s.get("expand") == "hellowork"]
+        if not cfg["sites"] or not cfg["hellowork_pages"]:
+            print("Error: --free needs a HelloWork site block with expand = \"hellowork\" "
+                  "and at least one enabled [[hellowork_pages]] entry.", file=sys.stderr)
+            return 1
+        searches = []
+        print(f"Free run: 0 Serper credits, reading {len(cfg['hellowork_pages'])} HelloWork page(s) only.",
+              file=sys.stderr)
+    else:
+        searches = build_searches(cfg)
+        print(f"Running {len(searches)} searches (1 Serper credit each)...", file=sys.stderr)
 
     rows, fields, delim = load_offers()
     if n := rematch_rows(rows, cfg):

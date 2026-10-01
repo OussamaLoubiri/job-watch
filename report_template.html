@@ -38,6 +38,35 @@
   }
   header h1 { margin: 0; font-size: 18px; }
   header .meta { color: var(--muted); }
+  /* Signature on the right of the header */
+  header .love {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
+    font: italic 600 17px/1.2 "Segoe Script", "Brush Script MT", "Apple Chancery", "URW Chancery L", cursive;
+    letter-spacing: .02em;
+  }
+  header .love .words {
+    background: linear-gradient(90deg, #e05a8a, #f28cb1, #c9518f);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  header .love .heart {
+    display: inline-block; color: #e8457a; font-style: normal; font-size: 18px;
+    filter: drop-shadow(0 0 6px rgba(232, 69, 122, .55));
+    animation: heartbeat 1.6s ease-in-out infinite; transform-origin: center;
+  }
+  @keyframes heartbeat {
+    0%, 100% { transform: scale(1); }
+    15% { transform: scale(1.25); }
+    30% { transform: scale(1); }
+    45% { transform: scale(1.18); }
+    60% { transform: scale(1); }
+  }
+  @media (prefers-color-scheme: dark) {
+    header .love .words { background: linear-gradient(90deg, #ff8fb5, #ffc2d6, #f07aa8); -webkit-background-clip: text; background-clip: text; }
+    header .love .heart { color: #ff6f9c; filter: drop-shadow(0 0 8px rgba(255, 111, 156, .6)); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    header .love .heart { animation: none; }
+  }
   .layout { display: grid; grid-template-columns: 260px 1fr; gap: 16px; padding: 16px 20px; }
   aside { display: flex; flex-direction: column; gap: 12px; }
   .box { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
@@ -98,6 +127,20 @@
   .new { color: var(--new); font-weight: 700; font-size: 11px; margin-left: 4px; }
   td.prio { color: var(--b-stage); font-weight: 600; }
   .empty { padding: 40px; text-align: center; color: var(--muted); }
+  .banner {
+    margin: 12px 20px 0; padding: 8px 12px; border-radius: 8px; font-size: 13px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--muted);
+  }
+  .banner.error { border-color: var(--new); color: var(--new); }
+  .banner code { background: var(--hover); padding: 1px 5px; border-radius: 4px; }
+  td.actions { white-space: nowrap; }
+  td.actions button { padding: 2px 7px; font-size: 12px; margin-right: 4px; }
+  td.actions button.on-applied { color: var(--b-alt); border-color: var(--b-alt); }
+  td.actions button.on-hidden { color: var(--new); border-color: var(--new); }
+  td.actions button:disabled { opacity: .4; cursor: not-allowed; }
+  tr.hidden-offer td { opacity: .5; }
+  .st-applied { color: var(--b-alt); font-weight: 600; white-space: nowrap; }
+  .st-hidden { color: var(--muted); font-style: italic; }
   @media (max-width: 820px) {
     .layout { grid-template-columns: 1fr; padding: 12px 16px; }
     header { padding: 12px 16px; }
@@ -109,7 +152,11 @@
 <header>
   <h1>Job offers</h1>
   <span class="meta" id="meta"></span>
+  <span class="love" title="Made with love for Zaynabe ❤">
+    <span class="words">Made with love for Zaynabe</span><span class="heart" aria-hidden="true">❤</span>
+  </span>
 </header>
+<div class="banner" id="banner" hidden></div>
 
 <div class="layout">
   <aside>
@@ -176,6 +223,8 @@
 
   // Facets: field shown in the sidebar. "job" filters on every matched title.
   const FACETS = [
+    // Status first: tick "not interested" here to see the offers hidden by default
+    { key: "status", label: "Status", always: true },
     { key: "_prio", label: "Priority" },
     { key: "contract", label: "Contract" },
     { key: "job", label: "Job title" },
@@ -185,7 +234,6 @@
     { key: "site", label: "Site" },
     { key: "source", label: "Source" },
     { key: "company", label: "Company", search: true },
-    { key: "status", label: "Status" },
   ];
   const COLUMNS = [
     { key: "found", label: "Found" },
@@ -199,11 +247,20 @@
     { key: "salary", label: "Salary" },
     { key: "site", label: "Site" },
     { key: "status", label: "Status" },
+    { key: "_actions", label: "Actions", nosort: true },
   ];
+
+  // Statuses set by the buttons (same strings as STATUS_* in jobs.py). Saving needs
+  // the page to be served by "python3 jobs.py --serve"; opened as a file, it's read-only.
+  const APPLIED = "applied", NOT_INTERESTED = "not interested";
+  const SERVER = DATA.server;   // {token} when served, null when opened from disk
 
   // Data values (contract, remote, source, ...) are shown exactly as jobs.py stores
   // them in offers.csv, in French; only the interface itself is in English.
+  // The two button statuses are stored lowercase but shown capitalised.
+  const STATUS_LABEL = { [APPLIED]: "Applied", [NOT_INTERESTED]: "Not interested" };
   function display(key, v) {
+    if (key === "status" && STATUS_LABEL[v]) return STATUS_LABEL[v];
     return v || NONE;
   }
 
@@ -234,7 +291,9 @@
   }
 
   // Preferred ordering of facet values, then by count
-  const ORDER = { contract: DATA.contracts, job: DATA.titles, _prio: [PRIO_YES, PRIO_NO] };
+  const ORDER = {
+    contract: DATA.contracts, job: DATA.titles, _prio: [PRIO_YES, PRIO_NO], status: [APPLIED, NOT_INTERESTED],
+  };
 
   // Every visit starts unfiltered (all offers shown). Only the column sort is
   // remembered between visits; filters last for the current visit only.
@@ -242,7 +301,7 @@
   try {
     localStorage.removeItem("job-offers-filters");  // older versions saved the filters too
     const saved = JSON.parse(localStorage.getItem(STORE) || "null");
-    if (saved && saved.sort && COLUMNS.some(c => c.key === saved.sort.key)) state.sort = saved.sort;
+    if (saved && saved.sort && COLUMNS.some(c => c.key === saved.sort.key && !c.nosort)) state.sort = saved.sort;
   } catch (e) { /* storage unavailable: start with defaults */ }
   FACETS.forEach(f => { state.sel[f.key] = new Set(); });
 
@@ -259,6 +318,10 @@
 
   // Does an offer pass every filter, optionally ignoring one facet (for counts)?
   function passes(o, skipFacet) {
+    // "Not interested" offers stay hidden unless you tick "not interested" in the
+    // Status filter. Not applied while counting the Status filter itself, so its
+    // "not interested" option shows the real count.
+    if (o.status === NOT_INTERESTED && skipFacet !== "status" && !state.sel.status.has(NOT_INTERESTED)) return false;
     if (state.q) {
       const words = state.q.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").split(/\s+/).filter(Boolean);
       if (!words.every(w => o._text.includes(w))) return false;
@@ -297,8 +360,10 @@
       const counts = new Map();
       const all = new Set();
       offers.forEach(o => values(o, f.key).forEach(v => all.add(v)));
+      // Status always lists the two button statuses, even before any offer has them
+      if (f.key === "status") { all.add(APPLIED); all.add(NOT_INTERESTED); all.add(NONE); }
       offers.filter(o => passes(o, f.key)).forEach(o => values(o, f.key).forEach(v => counts.set(v, (counts.get(v) || 0) + 1)));
-      if (all.size <= 1 && !state.sel[f.key].size) continue;  // nothing to choose from
+      if (!f.always && all.size <= 1 && !state.sel[f.key].size) continue;  // nothing to choose from
 
       const order = ORDER[f.key] || [];
       let vals = [...all].sort((a, b) => {
@@ -378,6 +443,7 @@
   function renderHead() {
     const head = document.getElementById("head");
     head.replaceChildren(...COLUMNS.map(c => {
+      if (c.nosort) return el("th", { text: c.label, style: "cursor: default" });
       const arrow = state.sort.key === c.key ? (state.sort.dir > 0 ? " ▲" : " ▼") : "";
       return el("th", {
         class: state.sort.key === c.key ? "sorted" : "", text: c.label + arrow,
@@ -409,7 +475,7 @@
       const isNew = o.found === DATA.today ? el("span", { class: "new", text: "NEW" }) : null;
       const sub = o.notes ? el("div", { class: "sub", text: o.notes }) : null;
       const cell = (v, cls) => el("td", { class: cls || "", text: v || NONE });
-      return el("tr", {}, [
+      return el("tr", { class: o.status === NOT_INTERESTED ? "hidden-offer" : "" }, [
         el("td", { class: "nowrap" }, [o.found || NONE, isNew]),
         cell(o.posted, "nowrap muted"),
         el("td", {}, [badge(o.contract)]),
@@ -420,19 +486,77 @@
         cell(display("remote", o.remote), "muted"),
         cell(o.salary, "nowrap"),
         cell(o.site, "muted"),
-        cell(o.status),
+        statusCell(o),
+        actionsCell(o),
       ]);
     }));
     document.getElementById("empty").hidden = list.length > 0;
   }
 
+  function statusCell(o) {
+    if (o.status === APPLIED) {
+      return el("td", { class: "st-applied", text: "✓ Applied" + (o.applied_on ? ` ${o.applied_on}` : "") });
+    }
+    if (o.status === NOT_INTERESTED) return el("td", { class: "st-hidden", text: "Not interested" });
+    return el("td", { text: o.status || NONE });   // any status typed by hand in the CSV
+  }
+
+  function actionsCell(o) {
+    const tip = SERVER ? "" : "Read-only: start “python3 jobs.py --serve” to save changes";
+    const btn = (text, cls, title, status) => {
+      const b = el("button", { text, class: cls, title: tip || title });
+      b.disabled = !SERVER;
+      b.addEventListener("click", () => setStatus(o, status, b));
+      return b;
+    };
+    const kids = [];
+    if (o.status !== APPLIED) kids.push(btn("✓ Applied", "", "Mark as applied (saves today's date)", APPLIED));
+    if (o.status !== NOT_INTERESTED) kids.push(btn("✕ Not interested", "", "Hide this offer", NOT_INTERESTED));
+    if (o.status === APPLIED || o.status === NOT_INTERESTED) {
+      kids.push(btn("↺", o.status === APPLIED ? "on-applied" : "on-hidden", "Undo: clear the status", ""));
+    }
+    return el("td", { class: "actions" }, kids);
+  }
+
+  function showBanner(text, isError) {
+    const b = document.getElementById("banner");
+    b.className = "banner" + (isError ? " error" : "");
+    b.textContent = text;
+    b.hidden = !text;
+  }
+
+  // Save a status through the local server; the page only changes once offers.csv is saved
+  async function setStatus(o, status, button) {
+    if (!SERVER) return;
+    button.disabled = true;
+    try {
+      const resp = await fetch("/api/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Token": SERVER.token },
+        body: JSON.stringify({ url: o.url, status }),
+      });
+      const res = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(res.error || `HTTP ${resp.status}`);
+      o.status = res.status;
+      o.applied_on = res.applied_on;
+      showBanner("", false);
+      render();
+    } catch (e) {
+      showBanner(`Not saved: ${e.message}. ` +
+        "Is “python3 jobs.py --serve” still running? Reload the page after restarting it.", true);
+      button.disabled = false;
+    }
+  }
+
   function render() {
     const list = offers.filter(o => passes(o));
     const fresh = offers.filter(o => o.found === DATA.today).length;
+    const applied = offers.filter(o => o.status === APPLIED).length;
+    const hidden = offers.filter(o => o.status === NOT_INTERESTED).length;
     document.getElementById("count").textContent = `${list.length} / ${offers.length} offers`;
     document.getElementById("meta").textContent =
       `${offers.length} offers tracked · ${offers.filter(o => o._isPrio).length} ★ in priority cities · ` +
-      `${fresh} new today · generated ${DATA.generated}`;
+      `${applied} applied · ${hidden} not interested (hidden) · ${fresh} new today · generated ${DATA.generated}`;
     renderFacets();
     renderChips();
     renderHead();
@@ -457,6 +581,10 @@
     render();
   });
 
+  if (!SERVER) {
+    showBanner("Read-only view. To mark offers as Applied / Not interested, run " +
+      "“python3 jobs.py --serve” (Windows: “py jobs.py --serve”) and use the page it opens.", false);
+  }
   render();
 })();
 </script>
