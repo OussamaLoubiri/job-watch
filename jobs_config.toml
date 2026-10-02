@@ -22,8 +22,11 @@ country_code = "fr"   # Google gl/hl code: results and interface for this countr
 # Cities to search, one query each. Empty list = whole country only.
 # Each entry multiplies the number of searches (and credits) per run.
 # "" = no city, i.e. the whole country. Without "", France-wide search is dropped.
-# Order = search order: the priority cities first, then all of France.
-cities = ["Metz", "Nancy", "Strasbourg", ""]
+# Order = search order: the region first, then all of France.
+# "Grand Est" (one search) instead of Metz, Nancy, Strasbourg (three) halves the
+# credits; the ★ priority below still pins Metz/Nancy/Strasbourg offers on top.
+# Previous setting: cities = ["Metz", "Nancy", "Strasbourg", ""]
+cities = ["Grand Est", ""]
 # Offers located in these cities are listed first in the daily report and pinned
 # to the top of the HTML page (marked ★). Defaults to the named entries of `cities`.
 # Add nearby towns here to treat them as priority too, e.g. "Thionville".
@@ -41,6 +44,10 @@ known_cities = [
     # around Metz / Nancy / Strasbourg
     "Thionville", "Schiltigheim", "Illkirch-Graffenstaden", "Vandœuvre-lès-Nancy",
     "Bouxières-sous-Froidmont", "Colmar", "Haguenau", "Sarreguemines", "Forbach",
+    # rest of Grand Est (searched as one region)
+    "Troyes", "Charleville-Mézières", "Épinal", "Châlons-en-Champagne", "Saint-Dié-des-Vosges",
+    "Verdun", "Bar-le-Duc", "Lunéville", "Sélestat", "Saverne", "Saint-Avold", "Pont-à-Mousson",
+    "Hagondange", "Yutz", "Woippy", "Montigny-lès-Metz", "Laxou", "Villers-lès-Nancy",
 ]
 
 [filters]
@@ -49,6 +56,16 @@ require_title_match = true
 # Detected contract types to drop entirely, e.g. ["Stage"] to hide internships.
 # Possible values: Alternance, Stage, CDI, CDD, Freelance, Inconnu
 hide_contracts = ["Stage", "Freelance", "Inconnu"]
+# Offers whose TITLE contains one of these words are dropped (matching ignores case,
+# accents and hyphens; whole words only). Also removes them from offers.csv on the
+# next run, except offers you marked Applied / Not interested or wrote notes on.
+# More experienced-level words you could add: "confirmé", "expérimenté",
+# "experienced", "lead", "principal", "staff", "expert".
+exclude_title_words = ["senior", "sr"]
+# Offers whose TITLE contains one of these words are shown first (HTML page, and
+# within each group of the daily report) with a "Junior" badge.
+junior_title_words = ["junior", "jr", "débutant", "débutante", "jeune diplômé", "jeune diplômée",
+                      "entry level", "graduate"]
 
 # Job position names. One query is sent per site x job x contract type x city,
 # so every entry added here costs (sites x contract types x cities) credits per run.
@@ -127,6 +144,44 @@ expand = "hellowork"
 auto_pages = false
 max_pages = 40      # at most this many HelloWork pages opened per run (direct pages first)
 page_delay = 1.5    # seconds between page requests, to stay polite
+
+# LinkedIn, through Google only (the script never contacts LinkedIn). Equivalent of
+#   site:linkedin.com/jobs/view alternance "Grand Est" (Metz OR Nancy OR Strasbourg)
+#     ("Data" OR "IA" OR "Machine Learning" OR "NLP")
+# Serper's free plan rejects site:, OR and quotes, so each OR combination is its own
+# plain-keyword search (3 cities x 6 keywords + 4 France-wide = 22 credits per run) and only
+# linkedin.com/jobs/view/ results are kept.
+# `queries` = exact searches for this site, instead of the titles x cities grid.
+[[sites]]
+name = "LinkedIn"
+domains = ["linkedin.com"]
+offer_paths = ['^/jobs/view/']
+days = 7
+queries = [
+    "linkedin alternance Data Metz Grand Est",
+    "linkedin alternance IA Metz Grand Est",
+    "linkedin alternance Machine Learning Metz Grand Est",
+    "linkedin alternance NLP Metz Grand Est",
+    "linkedin alternance IA générative Metz Grand Est",
+    "linkedin alternance Ingénieur IA Metz Grand Est",
+    "linkedin alternance Data Nancy Grand Est",
+    "linkedin alternance IA Nancy Grand Est",
+    "linkedin alternance Machine Learning Nancy Grand Est",
+    "linkedin alternance NLP Nancy Grand Est",
+    "linkedin alternance IA générative Nancy Grand Est",
+    "linkedin alternance Ingénieur IA Nancy Grand Est",
+    "linkedin alternance Data Strasbourg Grand Est",
+    "linkedin alternance IA Strasbourg Grand Est",
+    "linkedin alternance Machine Learning Strasbourg Grand Est",
+    "linkedin alternance NLP Strasbourg Grand Est",
+    "linkedin alternance IA générative Strasbourg Grand Est",
+    "linkedin alternance Ingénieur IA Strasbourg Grand Est",
+    # All of France: IA at alternance / junior level
+    "linkedin alternance IA France",
+    "linkedin alternance intelligence artificielle France",
+    "linkedin alternance IA junior France",
+    "linkedin apprenti IA France",
+]
 
 
 # ---------------------------------------------------------------------------

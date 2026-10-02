@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
-  report_template.html - template for reports/offers.html, filled in by jobs.py.
-  jobs.py replaces the data placeholder in the <script id="data"> tag below with
+  report_template.html - template for reports/offers.html, filled in by job_search.py.
+  job_search.py replaces the data placeholder in the <script id="data"> tag below with
   the offers as JSON (the placeholder must appear only there).
   Self-contained: no external scripts, works offline from file://.
 -->
@@ -10,6 +10,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Job offers</title>
+<script>
+  // Apply the saved night/day choice before the page is drawn (no flash)
+  try {
+    const t = localStorage.getItem("job-offers-theme");
+    if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) { /* storage unavailable: follow the system setting */ }
+</script>
 <style>
   :root {
     --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #677085;
@@ -17,15 +24,47 @@
     --b-alt: #1f8a4c; --b-alt-bg: #e3f5ea; --b-stage: #a35a00; --b-stage-bg: #fdf0dd;
     --b-cdi: #2f6fde; --b-cdi-bg: #e6eefc; --b-other: #677085; --b-other-bg: #eef0f4;
     --new: #d6336c;
+    --love-grad: linear-gradient(90deg, #e05a8a, #f28cb1, #c9518f);
+    --heart: #e8457a; --heart-glow: rgba(232, 69, 122, .55);
+    color-scheme: light;
+  }
+  /* Night mode: follows the system setting, unless the 🌙/☀️ button chose one
+     (data-theme="dark" / "light" on <html>, remembered in this browser). */
+  :root[data-theme="dark"] {
+    --bg: #12151b; --panel: #1a1e26; --text: #e4e7ee; --muted: #8e97aa;
+    --border: #2a303b; --accent: #6d9cf0; --accent-soft: #23314d; --hover: #212632;
+    --b-alt: #5fd394; --b-alt-bg: #193526; --b-stage: #f0b35c; --b-stage-bg: #3a2b14;
+    --b-cdi: #6d9cf0; --b-cdi-bg: #23314d; --b-other: #a5adbd; --b-other-bg: #262b35;
+    --new: #f06595;
+    --love-grad: linear-gradient(90deg, #ff8fb5, #ffc2d6, #f07aa8);
+    --heart: #ff6f9c; --heart-glow: rgba(255, 111, 156, .6);
+    color-scheme: dark;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #12151b; --panel: #1a1e26; --text: #e4e7ee; --muted: #8e97aa;
       --border: #2a303b; --accent: #6d9cf0; --accent-soft: #23314d; --hover: #212632;
       --b-alt: #5fd394; --b-alt-bg: #193526; --b-stage: #f0b35c; --b-stage-bg: #3a2b14;
       --b-cdi: #6d9cf0; --b-cdi-bg: #23314d; --b-other: #a5adbd; --b-other-bg: #262b35;
       --new: #f06595;
+      --love-grad: linear-gradient(90deg, #ff8fb5, #ffc2d6, #f07aa8);
+      --heart: #ff6f9c; --heart-glow: rgba(255, 111, 156, .6);
+      color-scheme: dark;
     }
+  }
+  /* Search buttons (work only when served by --serve) */
+  header .run { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; width: 100%; }
+  header .run button { font-size: 13px; }
+  header .run button:disabled, header .run select:disabled { opacity: .45; cursor: not-allowed; }
+  header .run select {
+    padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--text); font: inherit; font-size: 13px;
+  }
+  .banner.running { border-color: var(--accent); color: var(--accent); }
+  .banner.done { border-color: var(--b-alt); color: var(--b-alt); }
+  .theme-toggle {
+    font-size: 16px; line-height: 1; padding: 6px 9px; border-radius: 999px;
+    background: var(--hover); color: var(--text);
   }
   * { box-sizing: border-box; }
   body {
@@ -45,12 +84,12 @@
     letter-spacing: .02em;
   }
   header .love .words {
-    background: linear-gradient(90deg, #e05a8a, #f28cb1, #c9518f);
+    background: var(--love-grad);
     -webkit-background-clip: text; background-clip: text; color: transparent;
   }
   header .love .heart {
-    display: inline-block; color: #e8457a; font-style: normal; font-size: 18px;
-    filter: drop-shadow(0 0 6px rgba(232, 69, 122, .55));
+    display: inline-block; color: var(--heart); font-style: normal; font-size: 18px;
+    filter: drop-shadow(0 0 7px var(--heart-glow));
     animation: heartbeat 1.6s ease-in-out infinite; transform-origin: center;
   }
   @keyframes heartbeat {
@@ -59,10 +98,6 @@
     30% { transform: scale(1); }
     45% { transform: scale(1.18); }
     60% { transform: scale(1); }
-  }
-  @media (prefers-color-scheme: dark) {
-    header .love .words { background: linear-gradient(90deg, #ff8fb5, #ffc2d6, #f07aa8); -webkit-background-clip: text; background-clip: text; }
-    header .love .heart { color: #ff6f9c; filter: drop-shadow(0 0 8px rgba(255, 111, 156, .6)); }
   }
   @media (prefers-reduced-motion: reduce) {
     header .love .heart { animation: none; }
@@ -125,6 +160,10 @@
   .b-CDI { color: var(--b-cdi); background: var(--b-cdi-bg); }
   .b-other { color: var(--b-other); background: var(--b-other-bg); }
   .new { color: var(--new); font-weight: 700; font-size: 11px; margin-left: 4px; }
+  .junior {
+    display: inline-block; margin-right: 6px; padding: 0 7px; border-radius: 999px;
+    font-size: 11px; font-weight: 700; color: var(--b-alt); background: var(--b-alt-bg);
+  }
   td.prio { color: var(--b-stage); font-weight: 600; }
   .empty { padding: 40px; text-align: center; color: var(--muted); }
   .banner {
@@ -155,7 +194,39 @@
   <span class="love" title="Made with love for Zaynabe ❤">
     <span class="words">Made with love for Zaynabe</span><span class="heart" aria-hidden="true">❤</span>
   </span>
+  <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle night mode"></button>
+  <div class="run" id="run-controls">
+    <button id="run-free" type="button">🔍 Free search</button>
+    <button id="run-full" type="button">🔍 Full search</button>
+    <select id="run-site" autocomplete="off" aria-label="Site to search"></select>
+    <button id="run-site-btn" type="button">Search site</button>
+  </div>
 </header>
+<script>
+  // Night mode button: switches light/dark, remembered in this browser. Kept outside
+  // the main script so it works even when the page has no data.
+  (function () {
+    const KEY = "job-offers-theme";
+    const btn = document.getElementById("theme-toggle");
+    const media = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+    const isDark = () => {
+      const t = document.documentElement.getAttribute("data-theme");
+      return t ? t === "dark" : !!(media && media.matches);
+    };
+    const paint = () => {
+      btn.textContent = isDark() ? "☀️" : "🌙";
+      btn.title = isDark() ? "Switch to day mode" : "Switch to night mode";
+    };
+    btn.addEventListener("click", () => {
+      const next = isDark() ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      try { localStorage.setItem(KEY, next); } catch (e) { /* storage unavailable */ }
+      paint();
+    });
+    if (media && media.addEventListener) media.addEventListener("change", paint);
+    paint();
+  })();
+</script>
 <div class="banner" id="banner" hidden></div>
 
 <div class="layout">
@@ -215,7 +286,7 @@
   } catch (e) {
     // Opened the template itself (data token not filled in) or the data is corrupt
     document.getElementById("count").textContent =
-      "No data: this file is the template. Run “python3 jobs.py” (or --html-only) and open reports/offers.html.";
+      "No data: this file is the template. Run “python3 job_search.py” (or --html-only) and open reports/offers.html.";
     return;
   }
   const NONE = "—";
@@ -226,6 +297,7 @@
     // Status first: tick "not interested" here to see the offers hidden by default
     { key: "status", label: "Status", always: true },
     { key: "_prio", label: "Priority" },
+    { key: "_level", label: "Level" },
     { key: "contract", label: "Contract" },
     { key: "job", label: "Job title" },
     { key: "city", label: "City", search: true },
@@ -234,6 +306,8 @@
     { key: "site", label: "Site" },
     { key: "source", label: "Source" },
     { key: "company", label: "Company", search: true },
+    // Which Google search found the offer (empty for HelloWork direct pages / older offers)
+    { key: "query", label: "Found by search", search: true },
   ];
   const COLUMNS = [
     { key: "found", label: "Found" },
@@ -250,12 +324,12 @@
     { key: "_actions", label: "Actions", nosort: true },
   ];
 
-  // Statuses set by the buttons (same strings as STATUS_* in jobs.py). Saving needs
-  // the page to be served by "python3 jobs.py --serve"; opened as a file, it's read-only.
+  // Statuses set by the buttons (same strings as STATUS_* in job_search.py). Saving needs
+  // the page to be served by "python3 job_search.py --serve"; opened as a file, it's read-only.
   const APPLIED = "applied", NOT_INTERESTED = "not interested";
   const SERVER = DATA.server;   // {token} when served, null when opened from disk
 
-  // Data values (contract, remote, source, ...) are shown exactly as jobs.py stores
+  // Data values (contract, remote, source, ...) are shown exactly as job_search.py stores
   // them in offers.csv, in French; only the interface itself is in English.
   // The two button statuses are stored lowercase but shown capitalised.
   const STATUS_LABEL = { [APPLIED]: "Applied", [NOT_INTERESTED]: "Not interested" };
@@ -264,11 +338,13 @@
     return v || NONE;
   }
 
-  // Same normalisation as jobs.py norm(): accents, case and punctuation ignored
+  // Same normalisation as job_search.py norm(): accents, case and punctuation ignored
   const normCity = s => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "")
     .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const PRIORITY = new Set((DATA.priority_cities || []).map(normCity));
   const PRIO_YES = "★ Priority city", PRIO_NO = "Other cities";
+  const JUNIOR = (DATA.junior_words || []).map(normCity);
+  const LEVEL_JUNIOR = "Junior", LEVEL_OTHER = "Not specified";
   const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
   const offers = DATA.offers.map(o => {
@@ -277,9 +353,13 @@
     const text = [o.title, o.company, o.city, o.country, o.site, o.source, o.matched, o.notes, o.status]
       .join(" ").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
     const prio = PRIORITY.has(normCity(o.city));
+    // Junior = a junior_title_words word in the title (whole word, accents/case ignored)
+    const t = " " + normCity(o.title) + " ";
+    const junior = JUNIOR.some(w => w && t.includes(" " + w + " "));
     return Object.assign({}, o, {
       _jobs: jobs.length ? jobs : [NONE], _text: text, _isPrio: prio, _prio: prio ? PRIO_YES : PRIO_NO,
-      // posted is ISO when jobs.py could parse Google's/HelloWork's date, else raw text or empty
+      _isJunior: junior, _level: junior ? LEVEL_JUNIOR : LEVEL_OTHER,
+      // posted is ISO when job_search.py could parse Google's/HelloWork's date, else raw text or empty
       _postedIso: ISO.test(o.posted || "") ? o.posted : "",
     });
   });
@@ -293,6 +373,7 @@
   // Preferred ordering of facet values, then by count
   const ORDER = {
     contract: DATA.contracts, job: DATA.titles, _prio: [PRIO_YES, PRIO_NO], status: [APPLIED, NOT_INTERESTED],
+    _level: [LEVEL_JUNIOR, LEVEL_OTHER],
   };
 
   // Every visit starts unfiltered (all offers shown). Only the column sort is
@@ -460,7 +541,8 @@
     // Sort published dates on the parsed ISO value; unparsed text sorts as empty (last)
     const sortVal = (o) => key === "posted" ? o._postedIso : (o[key] || "");
     list.sort((a, b) => {
-      // Priority-city offers always on top, then the chosen column
+      // Junior offers always on top, then priority-city offers, then the chosen column
+      if (a._isJunior !== b._isJunior) return a._isJunior ? -1 : 1;
       if (a._isPrio !== b._isPrio) return a._isPrio ? -1 : 1;
       const va = sortVal(a), vb = sortVal(b);
       if (!va && vb) return 1;   // empty values always last
@@ -480,7 +562,7 @@
         cell(o.posted, "nowrap muted"),
         el("td", {}, [badge(o.contract)]),
         cell(o.job),
-        el("td", { class: "title" }, [link, sub]),
+        el("td", { class: "title" }, [o._isJunior ? el("span", { class: "junior", text: "Junior" }) : null, link, sub]),
         cell(o.company),
         cell((o._isPrio ? "★ " : "") + (o.city || NONE), o._isPrio ? "prio" : ""),
         cell(display("remote", o.remote), "muted"),
@@ -502,7 +584,7 @@
   }
 
   function actionsCell(o) {
-    const tip = SERVER ? "" : "Read-only: start “python3 jobs.py --serve” to save changes";
+    const tip = SERVER ? "" : "Read-only: start “python3 job_search.py --serve” to save changes";
     const btn = (text, cls, title, status) => {
       const b = el("button", { text, class: cls, title: tip || title });
       b.disabled = !SERVER;
@@ -518,11 +600,109 @@
     return el("td", { class: "actions" }, kids);
   }
 
-  function showBanner(text, isError) {
+  // kind: true / "error" = red, "running" = blue, "done" = green, otherwise neutral
+  function showBanner(text, kind) {
     const b = document.getElementById("banner");
-    b.className = "banner" + (isError ? " error" : "");
+    const cls = kind === true ? "error" : (kind || "");
+    b.className = "banner" + (cls ? " " + cls : "");
     b.textContent = text;
     b.hidden = !text;
+  }
+
+  // ---- Search buttons: start a run on the local server and follow its progress ----
+  const PLAN = SERVER && SERVER.plan;
+  const runFree = document.getElementById("run-free");
+  const runFull = document.getElementById("run-full");
+  const runSite = document.getElementById("run-site");
+  const runSiteBtn = document.getElementById("run-site-btn");
+  const runButtons = [runFree, runFull, runSite, runSiteBtn];
+
+  function setupRunControls() {
+    if (!PLAN) {
+      const tip = "Start “python3 job_search.py --serve” to search from this page";
+      runButtons.forEach(b => { b.disabled = true; b.title = tip; });
+      runFull.textContent = "🔍 Full search";
+      return;
+    }
+    runFree.textContent = `🔍 Free search (0 credits, ${PLAN.offline_pages} HelloWork pages)`;
+    runFull.textContent = `🔍 Full search (${PLAN.full} credits)`;
+    runSite.replaceChildren(...PLAN.sites.map(s => {
+      const opt = document.createElement("option");
+      opt.value = s.name;
+      opt.textContent = `${s.name} (${s.credits} credits)`;
+      return opt;
+    }));
+    if (!PLAN.has_key) {
+      const tip = "No api_key in jobs_config.toml: only the free search is available";
+      [runFull, runSite, runSiteBtn].forEach(b => { b.disabled = true; b.title = tip; });
+    }
+    runFree.addEventListener("click", () => startRun("offline", "", 0));
+    runFull.addEventListener("click", () => startRun("full", "", PLAN.full));
+    runSiteBtn.addEventListener("click", () => {
+      const site = PLAN.sites.find(s => s.name === runSite.value);
+      if (site) startRun("site", site.name, site.credits);
+    });
+  }
+
+  function setRunning(running) {
+    if (!PLAN) return;
+    runFree.disabled = running;
+    [runFull, runSite, runSiteBtn].forEach(b => { b.disabled = running || !PLAN.has_key; });
+  }
+
+  async function api(method, path, body) {
+    const resp = await fetch(path, {
+      method,
+      headers: { "Content-Type": "application/json", "X-Token": SERVER.token },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const res = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(res.error || `HTTP ${resp.status}`);
+    return res;
+  }
+
+  async function startRun(mode, site, credits) {
+    const what = mode === "offline" ? "a free search (HelloWork pages only)"
+      : mode === "full" ? "a full search" : `a search on ${site}`;
+    if (credits > 0 && !window.confirm(`Start ${what}?\n\nThis uses ${credits} Serper credits.`)) return;
+    setRunning(true);
+    try {
+      const res = await api("POST", "/api/run", { mode, site, expected_credits: credits });
+      showBanner(`⏳ ${res.label} started (${res.credits} credits)…`, "running");
+      pollRun(false);
+    } catch (e) {
+      showBanner(`Search not started: ${e.message}`, true);
+      setRunning(false);
+    }
+  }
+
+  // fromLoad: called once when the page opens, to pick up a search that is still
+  // running (e.g. after a manual reload). It never reloads for an already-finished run.
+  async function pollRun(fromLoad) {
+    let st;
+    try {
+      st = await api("GET", "/api/run");
+    } catch (e) {
+      showBanner(`Lost contact with the server: ${e.message}. Is “python3 job_search.py --serve” still running?`, true);
+      setRunning(false);
+      return;
+    }
+    if (st.running) {
+      setRunning(true);
+      showBanner(`⏳ ${st.label} (started ${st.started}) — ${st.message}`, "running");
+      setTimeout(() => pollRun(false), 1500);
+      return;
+    }
+    setRunning(false);
+    const r = st.result;
+    if (!r || fromLoad) return;   // nothing running: leave the page as it is
+    if (r.ok) {
+      showBanner(`✓ ${st.label} finished at ${st.finished}: ${r.new} new offer(s), ${r.total} tracked, ` +
+        `${r.credits} credits used. Reloading…`, "done");
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      showBanner(`✕ ${st.label} failed: ${r.error || "see the terminal"}`, true);
+    }
   }
 
   // Save a status through the local server; the page only changes once offers.csv is saved
@@ -543,7 +723,7 @@
       render();
     } catch (e) {
       showBanner(`Not saved: ${e.message}. ` +
-        "Is “python3 jobs.py --serve” still running? Reload the page after restarting it.", true);
+        "Is “python3 job_search.py --serve” still running? Reload the page after restarting it.", true);
       button.disabled = false;
     }
   }
@@ -582,10 +762,12 @@
   });
 
   if (!SERVER) {
-    showBanner("Read-only view. To mark offers as Applied / Not interested, run " +
-      "“python3 jobs.py --serve” (Windows: “py jobs.py --serve”) and use the page it opens.", false);
+    showBanner("Read-only view. To mark offers as Applied / Not interested or search from this page, run " +
+      "“python3 job_search.py --serve” (Windows: “py job_search.py --serve”) and use the page it opens.", false);
   }
+  setupRunControls();
   render();
+  if (SERVER) pollRun(true);   // resume following a search that is still running
 })();
 </script>
 </body>

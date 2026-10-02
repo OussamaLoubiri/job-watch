@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-jobs.py - Daily job watcher (alternance / CDI).
+job_search.py - Daily job watcher (alternance / CDI).
 
 Reads its settings from jobs_config.toml (API key, search window, sites,
 job titles, location, contract types), runs plain-keyword Google searches
@@ -28,13 +28,13 @@ Setup:
     export TELEGRAM_CHAT_ID="123456789"
 
 Run:
-    python3 jobs.py                     # uses jobs_config.toml next to the script
-    python3 jobs.py other_config.toml   # or another config file
-    python3 jobs.py --only hellowork    # only sites whose name contains "hellowork"
-    python3 jobs.py --free              # 0 credits: only the HelloWork pages, no Google searches
-    python3 jobs.py --html-only         # rebuild reports/offers.html, no searches
-    python3 jobs.py --serve             # tracker in the browser; Applied / Not interested
-                                        # buttons save to offers.csv (Windows: py jobs.py --serve)
+    python3 job_search.py                     # uses jobs_config.toml next to the script
+    python3 job_search.py other_config.toml   # or another config file
+    python3 job_search.py --only hellowork    # only sites whose name contains "hellowork"
+    python3 job_search.py --offline           # 0 credits: only the HelloWork pages, no Google searches
+    python3 job_search.py --html-only         # rebuild reports/offers.html, no searches
+    python3 job_search.py --serve             # tracker in the browser; Applied / Not interested
+                                        # buttons save to offers.csv (Windows: py job_search.py --serve)
 """
 
 import argparse
@@ -45,13 +45,14 @@ import os
 import re
 import secrets
 import sys
+import threading
 import time
 import tomllib
 import unicodedata
 import webbrowser
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -70,12 +71,12 @@ SERPER_URL = "https://google.serper.dev/search"
 
 CSV_FIELDS = [
     "found", "posted", "contract", "job", "matched", "title", "company", "city",
-    "country", "remote", "salary", "site", "source", "status", "applied_on", "notes", "url",
+    "country", "remote", "salary", "site", "source", "query", "status", "applied_on", "notes", "url",
 ]
 
 # Direct page fetches (HelloWork expansion) identify themselves honestly
 PAGE_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) jobs.py personal job watcher",
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) job_search.py personal job watcher",
     "Accept-Language": "fr-FR,fr;q=0.9",
 }
 
@@ -126,7 +127,7 @@ def date_filter(days: int) -> str:
 
 
 def load_config(path: Path, require_key: bool = True) -> dict:
-    # require_key=False for the modes that never call Serper (--free, --serve, --html-only)
+    # require_key=False for the modes that never call Serper (--offline, --serve, --html-only)
     with path.open("rb") as f:
         cfg = tomllib.load(f)
 
@@ -195,6 +196,8 @@ def load_config(path: Path, require_key: bool = True) -> dict:
         "contracts": contracts,
         "require_title_match": bool(filters.get("require_title_match", True)),
         "hide_contracts": {c.lower() for c in filters.get("hide_contracts", [])},
+        "exclude_words": list(filters.get("exclude_title_words", [])),
+        "junior_words": list(filters.get("junior_title_words", [])),
         "hellowork_pages": hw_pages,
     }
 
@@ -206,6 +209,10 @@ def build_searches(cfg: dict) -> list[tuple[str, dict]]:
     # each result's domain instead.
     searches = []
     for site in cfg["sites"]:
+        if site.get("queries"):
+            # The site lists its exact searches: 1 credit each, no titles x cities grid
+            searches += [(q, site) for q in site["queries"]]
+            continue
         for contract in cfg["contracts"]:
             for title in cfg["search_terms"]:
                 for city in cfg["cities"]:
@@ -222,6 +229,9 @@ def build_searches(cfg: dict) -> list[tuple[str, dict]]:
 def url_parts(url: str) -> tuple[str, list[str]]:
     p = urlparse(url)
     host = (p.hostname or "").lower().removeprefix("www.")
+    # fr.linkedin.com/jobs/view/x and www.linkedin.com/jobs/view/x are the same offer
+    if host.endswith(".linkedin.com"):
+        host = "linkedin.com"
     segs = [s for s in p.path.split("/") if s]
     # Drop a leading language segment (/fr/, /en-GB/, /fr-fr/) so translations
     # of the same offer collapse to one
@@ -348,12 +358,37 @@ def rematch_rows(rows: list[dict], cfg: dict) -> int:
     return changed
 
 
+LINKEDIN_TITLE_RES = [
+    # "Thales hiring Alternance Data Scientist in Metz, Grand Est, France | LinkedIn"
+    re.compile(r"^(?P<company>.+?) hiring (?P<title>.+?) in (?P<loc>[^|]+?)(?:\s*[|–-]\s*LinkedIn.*)?$"),
+    # "Thales recrute pour des postes de Alternance Data Scientist à Metz, Grand Est, France"
+    re.compile(r"^(?P<company>.+?) recrute (?:pour (?:des postes de |le poste de |un poste de )?)?"
+               r"(?P<title>.+?) à (?P<loc>[^|]+?)(?:\s*[|–-]\s*LinkedIn.*)?$"),
+]
+
+
+def parse_linkedin_title(title: str) -> dict:
+    """Split a LinkedIn job title as Google shows it into title / company / city.
+    Unknown formats just lose the trailing '| LinkedIn'."""
+    for rx in LINKEDIN_TITLE_RES:
+        m = rx.match(title.strip())
+        if m:
+            return {"title": m["title"].strip(), "company": m["company"].strip(),
+                    "city": m["loc"].split(",")[0].strip()}
+    return {"title": re.sub(r"\s*[|–-]\s*LinkedIn\s*$", "", title).strip()}
+
+
 def build_offer(r: dict, site: dict, cfg: dict, today: date) -> dict:
     url = r.get("link", "")
     host, segs = url_parts(url)
     title = r.get("title", "") or "(no title)"
+    li = parse_linkedin_title(title) if host == "linkedin.com" else {}
+    title = li.get("title", title)
     t_title, t_url, t_snip = norm(title), norm(" ".join(segs)), norm(r.get("snippet", ""))
     job, matched = match_jobs(t_title + t_url, cfg["terms"])
+    city = extract_city(host, segs, [t_title, t_url, t_snip], cfg["known_cities"])
+    if li.get("city"):
+        city = next((c for c in cfg["known_cities"] if norm(c) == norm(li["city"])), li["city"])
     return {
         "found": today.isoformat(),
         "posted": parse_posted(r.get("date", ""), today),
@@ -361,13 +396,14 @@ def build_offer(r: dict, site: dict, cfg: dict, today: date) -> dict:
         "job": job,
         "matched": ", ".join(matched),
         "title": title,
-        "company": extract_company(host, segs),
-        "city": extract_city(host, segs, [t_title, t_url, t_snip], cfg["known_cities"]),
+        "company": li.get("company") or extract_company(host, segs),
+        "city": city,
         "country": cfg["country"],
         "remote": first_rule(REMOTE_RULES, [t_title + t_url + t_snip]),
         "salary": "",
         "site": site.get("name", host),
         "source": "Google",
+        "query": "",
         "status": "",
         "notes": "",
         "url": url,
@@ -496,28 +532,52 @@ def sort_offers(offers: list[dict], titles: list[str]) -> list[dict]:
     return sorted(sorted(offers, key=posted, reverse=True), key=group)
 
 
+def title_has(title: str, words: list[str]) -> bool:
+    # Whole-word match on the title only, ignoring case/accents/hyphens ("Senior", "SR")
+    t = norm(title)
+    return any(has_term(t, w) for w in words)
+
+
+def is_junior(o: dict, cfg: dict) -> bool:
+    return title_has(o.get("title", ""), cfg["junior_words"])
+
+
+def drop_excluded_rows(rows: list[dict], cfg: dict) -> int:
+    """Remove tracked offers whose title has an exclude_title_words word ("senior"),
+    keeping any you marked (status) or wrote notes on. Returns how many were removed."""
+    keep = [r for r in rows if r.get("status") or r.get("notes")
+            or not title_has(r.get("title", ""), cfg["exclude_words"])]
+    removed = len(rows) - len(keep)
+    rows[:] = keep
+    return removed
+
+
 def is_priority(o: dict, priority_cities: list[str]) -> bool:
     return any(norm(o.get("city", "")) == norm(c) for c in priority_cities)
 
 
-def report_section(header: str, offers: list[dict], titles: list[str], with_contract: bool) -> list[str]:
-    # Offers grouped by job title, under one "━━ HEADER (n)" banner
+def report_section(header: str, offers: list[dict], titles: list[str], with_contract: bool,
+                   junior_words: list[str]) -> list[str]:
+    # Offers grouped by job title, under one "━━ HEADER (n)" banner; juniors first in each group
     lines = [f"━━ {header} ({len(offers)}) " + "━" * 40]
     groups = defaultdict(list)
     for o in sort_offers(offers, titles):
         groups[o["job"] or "Autre"].append(o)
     for job, items in groups.items():
         lines += ["", job]
+        items.sort(key=lambda o: not title_has(o["title"], junior_words))   # stable: keeps date order
         for o in items:
             parts = ([o["contract"]] if with_contract else []) + [
                 o["company"], o["city"], o["remote"], o.get("salary", ""), o["posted"]]
             meta = " · ".join(x for x in parts if x)
-            lines.append(f"  • {o['title']}" + (f"  [{meta}]" if meta else ""))
+            tag = "[Junior] " if title_has(o["title"], junior_words) else ""
+            lines.append(f"  • {tag}{o['title']}" + (f"  [{meta}]" if meta else ""))
             lines.append(f"    {o['url']}")
     return lines + [""]
 
 
-def text_report(new: list[dict], titles: list[str], today: str, priority_cities: list[str]) -> str:
+def text_report(new: list[dict], titles: list[str], today: str, priority_cities: list[str],
+                junior_words: list[str]) -> str:
     per_site = Counter(o["site"] for o in new)
     lines = [
         f"{len(new)} nouvelle(s) offre(s) - {today}",
@@ -529,27 +589,28 @@ def text_report(new: list[dict], titles: list[str], today: str, priority_cities:
     if priority_cities:
         names = " · ".join(priority_cities)
         if prio:
-            lines += report_section(f"★ PRIORITÉ {names}", prio, titles, with_contract=True)
+            lines += report_section(f"★ PRIORITÉ {names}", prio, titles, True, junior_words)
         else:
             lines += [f"━━ ★ PRIORITÉ {names}: aucune nouvelle offre aujourd'hui", ""]
     rest = [o for o in new if o not in prio]
     for contract in CONTRACT_ORDER + sorted({o["contract"] for o in rest} - set(CONTRACT_ORDER)):
         offers = [o for o in rest if o["contract"] == contract]
         if offers:
-            lines += report_section(contract.upper(), offers, titles, with_contract=False)
+            lines += report_section(contract.upper(), offers, titles, False, junior_words)
     return "\n".join(lines)
 
 
-def build_html(rows: list[dict], cfg: dict, today: str, token: str | None = None) -> str:
-    """Fill the template with the offers. token is set only when served by --serve:
-    it turns on the Applied / Not interested buttons (and authorises their requests)."""
+def build_html(rows: list[dict], cfg: dict, today: str, server: dict | None = None) -> str:
+    """Fill the template with the offers. server is set only when served by --serve
+    ({token, plan}): it turns on the status and Search buttons (and authorises them)."""
     data = {
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "today": today,
         "titles": cfg["titles"],
         "contracts": CONTRACT_ORDER,
         "priority_cities": cfg["priority_cities"],
-        "server": {"token": token} if token else None,
+        "junior_words": cfg["junior_words"],
+        "server": server,
         "offers": rows,
     }
     # "</" escaped so an offer title can never close the <script> tag
@@ -613,21 +674,92 @@ def set_offer_status(url: str, status: str, today: str) -> dict:
     """Set status (and applied_on) of the offer with this URL in offers.csv.
     Re-reads the file each time, so edits made in a spreadsheet meanwhile are kept.
     Raises KeyError if the offer isn't in the tracker."""
-    rows, fields, delim = load_offers()
-    key = offer_key(url)
-    row = next((r for r in rows if offer_key(r.get("url", "")) == key), None)
-    if row is None:
-        raise KeyError(url)
-    row["status"] = status
-    if status == STATUS_APPLIED:
-        row["applied_on"] = row.get("applied_on") or today
-    elif status == "":
-        row["applied_on"] = ""
-    save_offers(rows, fields, delim)
-    return {"status": row["status"], "applied_on": row.get("applied_on", "")}
+    with CSV_LOCK:   # a search run started from the page may be saving at the same time
+        rows, fields, delim = load_offers()
+        key = offer_key(url)
+        row = next((r for r in rows if offer_key(r.get("url", "")) == key), None)
+        if row is None:
+            raise KeyError(url)
+        row["status"] = status
+        if status == STATUS_APPLIED:
+            row["applied_on"] = row.get("applied_on") or today
+        elif status == "":
+            row["applied_on"] = ""
+        save_offers(rows, fields, delim)
+        return {"status": row["status"], "applied_on": row.get("applied_on", "")}
 
 
-def make_handler(cfg: dict, token: str, port: int):
+def run_plan(cfg_path: Path) -> dict:
+    """What each Search button would do, from the current config: Serper credits for a
+    full run and per site, and the HelloWork pages read by the free search."""
+    cfg = load_config(cfg_path, require_key=False)
+    per_site = Counter(s["name"] for _, s in build_searches(cfg))
+    return {
+        "full": sum(per_site.values()),
+        "sites": [{"name": s["name"], "credits": per_site.get(s["name"], 0)} for s in cfg["sites"]],
+        "offline_pages": len(cfg["hellowork_pages"]),
+        "has_key": bool(cfg["api_key"]),
+    }
+
+
+class SearchRunner:
+    """Runs one search at a time in a background thread for the page's Search buttons,
+    and keeps its progress so the page can poll it."""
+
+    def __init__(self, cfg_path: Path):
+        self.cfg_path = cfg_path
+        self.lock = threading.Lock()
+        self.state = {"running": False}
+
+    def status(self) -> dict:
+        with self.lock:
+            return dict(self.state)
+
+    def start(self, mode: str, site_name: str, expected_credits: int | None) -> tuple[int, dict]:
+        try:
+            cfg = load_config(self.cfg_path, require_key=(mode != "offline"))
+        except (OSError, tomllib.TOMLDecodeError, ValueError, re.error) as e:
+            return 400, {"error": f"config error: {e}"}
+        label = {"offline": "Free search", "full": "Full search"}.get(mode, f"Search {site_name}")
+        if mode == "site":
+            cfg["sites"] = [s for s in cfg["sites"] if s["name"] == site_name]
+            if not cfg["sites"]:
+                return 400, {"error": f"no site named {site_name!r} in the config"}
+        elif mode not in ("offline", "full"):
+            return 400, {"error": "mode must be offline, full or site"}
+        credits = 0 if mode == "offline" else len(build_searches(cfg))
+        # The page shows (and the user confirms) a credit count; refuse to start if the
+        # config changed since and the run would now cost something else
+        if expected_credits is not None and expected_credits != credits:
+            return 409, {"error": f"the config changed: this search now costs {credits} credits "
+                                  f"(page said {expected_credits}). Reload the page and try again.",
+                         "credits": credits}
+        with self.lock:
+            if self.state.get("running"):
+                return 409, {"error": f"a search is already running ({self.state.get('label')})"}
+            self.state = {"running": True, "label": label, "credits": credits, "message": "Starting…",
+                          "started": datetime.now().strftime("%H:%M:%S")}
+        threading.Thread(target=self._run, args=(cfg, mode == "offline"), daemon=True).start()
+        print(f"\n=== {label} started from the page ({credits} Serper credits) ===", file=sys.stderr)
+        return 200, {"ok": True, "label": label, "credits": credits}
+
+    def _progress(self, msg: str) -> None:
+        with self.lock:
+            self.state["message"] = msg
+
+    def _run(self, cfg: dict, offline: bool) -> None:
+        try:
+            code, summary = run_search(cfg, offline=offline, progress=self._progress)
+            result = {"ok": code == 0, **summary}
+        except Exception as e:   # report any failure to the page instead of dying silently
+            print(f"Search failed: {e!r}", file=sys.stderr)
+            result = {"ok": False, "error": str(e)}
+        with self.lock:
+            self.state.update(running=False, finished=datetime.now().strftime("%H:%M:%S"), result=result,
+                              message="Done" if result.get("ok") else f"Failed: {result.get('error', '')}")
+
+
+def make_handler(cfg_path: Path, token: str, port: int, runner: SearchRunner):
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
 
     class Handler(BaseHTTPRequestHandler):
@@ -644,15 +776,40 @@ def make_handler(cfg: dict, token: str, port: int):
             # Refuse requests addressed to any other host name (DNS-rebinding guard)
             return self.headers.get("Host", "") in allowed_hosts
 
+        def token_ok(self) -> bool:
+            # The token is sent in a custom header: other websites can't read it from
+            # the page, and browsers won't let them set custom headers cross-site
+            # without a CORS preflight, which this server never approves.
+            return secrets.compare_digest(self.headers.get("X-Token", ""), token)
+
+        def read_json(self) -> dict:
+            length = int(self.headers.get("Content-Length", "0"))
+            req = json.loads(self.rfile.read(min(length, 10_000)) or b"{}")
+            if not isinstance(req, dict):
+                raise ValueError("expected a JSON object")
+            return req
+
         def do_GET(self):
             if not self.host_ok():
                 return self.send_json(403, {"error": "wrong host"})
-            if urlparse(self.path).path not in ("/", "/index.html"):
+            path = urlparse(self.path).path
+            if path == "/api/run":
+                if not self.token_ok():
+                    return self.send_json(403, {"error": "bad token - reload the page"})
+                return self.send_json(200, runner.status())
+            if path not in ("/", "/index.html"):
                 return self.send_json(404, {"error": "not found"})
-            # Built fresh from offers.csv on every load, so it always shows the saved state
+            # Built fresh from offers.csv and the config on every load, so it always
+            # shows the saved state and the current credit costs
+            try:
+                cfg = load_config(cfg_path, require_key=False)
+                plan = run_plan(cfg_path)
+            except (OSError, tomllib.TOMLDecodeError, ValueError, re.error) as e:
+                return self.send_json(500, {"error": f"config error: {e}"})
             rows, _, _ = load_offers()
             rematch_rows(rows, cfg)
-            page = build_html(rows, cfg, date.today().isoformat(), token).encode("utf-8")
+            server = {"token": token, "plan": plan}
+            page = build_html(rows, cfg, date.today().isoformat(), server).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(page)))
@@ -663,18 +820,25 @@ def make_handler(cfg: dict, token: str, port: int):
         def do_POST(self):
             if not self.host_ok():
                 return self.send_json(403, {"error": "wrong host"})
-            if urlparse(self.path).path != "/api/status":
+            path = urlparse(self.path).path
+            if path not in ("/api/status", "/api/run"):
                 return self.send_json(404, {"error": "not found"})
-            # The token is sent in a custom header: other websites can't read it from
-            # the page, and browsers won't let them set custom headers cross-site
-            # without a CORS preflight, which this server never approves.
-            if not secrets.compare_digest(self.headers.get("X-Token", ""), token):
+            if not self.token_ok():
                 return self.send_json(403, {"error": "bad token - reload the page"})
             try:
-                length = int(self.headers.get("Content-Length", "0"))
-                req = json.loads(self.rfile.read(min(length, 10_000)) or b"{}")
+                req = self.read_json()
+            except (ValueError, TypeError):
+                return self.send_json(400, {"error": "expected a JSON object"})
+
+            if path == "/api/run":
+                expected = req.get("expected_credits")
+                code, body = runner.start(str(req.get("mode", "")), str(req.get("site", "")),
+                                          int(expected) if isinstance(expected, int) else None)
+                return self.send_json(code, body)
+
+            try:
                 url, status = str(req["url"]), str(req["status"])
-            except (ValueError, KeyError, TypeError):
+            except KeyError:
                 return self.send_json(400, {"error": "expected JSON {url, status}"})
             if status not in BUTTON_STATUSES:
                 return self.send_json(400, {"error": f"status must be one of {sorted(BUTTON_STATUSES)}"})
@@ -696,17 +860,20 @@ def make_handler(cfg: dict, token: str, port: int):
     return Handler
 
 
-def serve(cfg: dict, port: int, open_browser: bool = True) -> int:
+def serve(cfg: dict, port: int, cfg_path: Path = DEFAULT_CONFIG, open_browser: bool = True) -> int:
     if not HTML_TEMPLATE.exists():
         print(f"Error: {HTML_TEMPLATE.name} missing.", file=sys.stderr)
         return 1
     token = secrets.token_urlsafe(24)
+    runner = SearchRunner(cfg_path)
     try:
-        # 127.0.0.1 only: reachable from this machine, never from the network
-        httpd = HTTPServer(("127.0.0.1", port), make_handler(cfg, token, port))
+        # 127.0.0.1 only: reachable from this machine, never from the network. Threaded,
+        # so the page can poll a running search and still save status clicks.
+        httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(cfg_path, token, port, runner))
     except OSError as e:
         print(f"Error: can't listen on 127.0.0.1:{port} ({e}). Try another --port.", file=sys.stderr)
         return 1
+    httpd.daemon_threads = True
     url = f"http://127.0.0.1:{port}/"
     print(f"Serving the job tracker at {url}  (Ctrl+C to stop)", file=sys.stderr)
     print(f"Changes are saved to {OFFERS_CSV}", file=sys.stderr)
@@ -738,7 +905,7 @@ def parse_args() -> argparse.Namespace:
                         "Applied / Not interested buttons save to offers.csv; Ctrl+C to stop. No searches.")
     p.add_argument("--port", type=int, default=8765, help="port for --serve (default 8765)")
     p.add_argument("--no-browser", action="store_true", help="with --serve: don't open the browser automatically")
-    p.add_argument("--free", action="store_true",
+    p.add_argument("--offline", action="store_true",
                    help="0 Serper credits: skip all Google searches, read only the [[hellowork_pages]] "
                         "directly; same filters, tracker and reports as a normal run")
     return p.parse_args()
@@ -766,7 +933,7 @@ def direct_pages(site: dict, cfg: dict) -> list[tuple[str, str, str]]:
 
 
 def expand_pages(queue: list, pending: dict, known: set, new: list, stats: dict,
-                 cfg: dict, today: date) -> None:
+                 cfg: dict, today: date, progress=None) -> None:
     """Open queued HelloWork pages: drop expired pending offers, collect the offer cards.
     Queue items are (priority, url, site, pending_key, source, kind); lower priority
     is read first. kind: "found" (Google result), "configured" ([[hellowork_pages]],
@@ -774,7 +941,7 @@ def expand_pages(queue: list, pending: dict, known: set, new: list, stats: dict,
     queue.sort(key=lambda q: q[0])
     read = Counter()
     blocked = set()
-    for _, url, site, pkey, source, kind in queue:
+    for _, url, site, pkey, source, kind, query in queue:
         name = site["name"]
         st = stats[name]
         if name in blocked or read[name] >= int(site.get("max_pages", 30)):
@@ -783,6 +950,9 @@ def expand_pages(queue: list, pending: dict, known: set, new: list, stats: dict,
         if read[name]:
             time.sleep(float(site.get("page_delay", 1.5)))
         read[name] += 1
+        if progress:
+            limit = min(int(site.get("max_pages", 30)), len(queue))
+            progress(f"Reading {name} page {read[name]}/{limit}: {source.split(': ', 1)[-1]}")
         try:
             page = fetch_page(url)
         except requests.RequestException as e:
@@ -822,9 +992,13 @@ def expand_pages(queue: list, pending: dict, known: set, new: list, stats: dict,
             if key in known:
                 continue
             offer = card_to_offer(card, site, cfg, today, source)
+            offer["query"] = query   # the search that led to this page ("" for direct pages)
             if cfg["require_title_match"] and not offer["job"]:
                 continue
             if offer["contract"].lower() in cfg["hide_contracts"]:
+                continue
+            if title_has(offer["title"], cfg["exclude_words"]):
+                st["excluded title"] += 1
                 continue
             known.add(key)
             new.append(offer)
@@ -834,7 +1008,7 @@ def expand_pages(queue: list, pending: dict, known: set, new: list, stats: dict,
 def main() -> int:
     args = parse_args()
     try:
-        cfg = load_config(args.config, require_key=not (args.free or args.serve or args.html_only))
+        cfg = load_config(args.config, require_key=not (args.offline or args.serve or args.html_only))
     except (OSError, tomllib.TOMLDecodeError, ValueError, re.error) as e:
         print(f"Error in config {args.config}: {e}", file=sys.stderr)
         return 1
@@ -845,39 +1019,59 @@ def main() -> int:
             return 1
 
     if args.serve:
-        return serve(cfg, args.port, open_browser=not args.no_browser)
+        return serve(cfg, args.port, args.config, open_browser=not args.no_browser)
 
     if args.html_only:
         # Offline: no Serper credits, no requests to job sites
         rows, fields, delim = load_offers()
-        if n := rematch_rows(rows, cfg):
+        removed = drop_excluded_rows(rows, cfg)
+        if (n := rematch_rows(rows, cfg)) or removed:
             save_offers(rows, fields, delim)
-            print(f"Updated the job/matched columns of {n} tracked offer(s).", file=sys.stderr)
+            if n:
+                print(f"Updated the job/matched columns of {n} tracked offer(s).", file=sys.stderr)
+        if removed:
+            print(f"Removed {removed} tracked offer(s) with an exclude_title_words word (e.g. senior).",
+                  file=sys.stderr)
         REPORT_DIR.mkdir(exist_ok=True)
         html_path = write_html(rows, cfg, date.today().isoformat())
         if html_path:
             print(f"HTML report rebuilt from {OFFERS_CSV.name} ({len(rows)} offers): {html_path}", file=sys.stderr)
         return 0
 
-    if args.free:
+    return run_search(cfg, offline=args.offline)[0]
+
+
+# Serialises writes to offers.csv between a running search and the page's status
+# buttons (both can happen at once under --serve).
+CSV_LOCK = threading.Lock()
+
+
+def run_search(cfg: dict, offline: bool = False, progress=None) -> tuple[int, dict]:
+    """One search run (command line or the page's Search buttons). progress(msg) is
+    called as the run advances. Returns (exit code, summary)."""
+    def say(msg: str) -> None:
+        if progress:
+            progress(msg)
+
+    if offline:
         # No Serper searches at all: only the [[hellowork_pages]] read directly. Same
         # filters, dedup, expiry check, tracker and reports as a normal run.
         cfg["sites"] = [s for s in cfg["sites"] if s.get("expand") == "hellowork"]
         if not cfg["sites"] or not cfg["hellowork_pages"]:
-            print("Error: --free needs a HelloWork site block with expand = \"hellowork\" "
-                  "and at least one enabled [[hellowork_pages]] entry.", file=sys.stderr)
-            return 1
+            msg = ("--offline needs a HelloWork site block with expand = \"hellowork\" "
+                   "and at least one enabled [[hellowork_pages]] entry.")
+            print(f"Error: {msg}", file=sys.stderr)
+            return 1, {"error": msg}
         searches = []
-        print(f"Free run: 0 Serper credits, reading {len(cfg['hellowork_pages'])} HelloWork page(s) only.",
+        print(f"Offline run: 0 Serper credits, reading {len(cfg['hellowork_pages'])} HelloWork page(s) only.",
               file=sys.stderr)
     else:
         searches = build_searches(cfg)
         print(f"Running {len(searches)} searches (1 Serper credit each)...", file=sys.stderr)
 
-    rows, fields, delim = load_offers()
-    if n := rematch_rows(rows, cfg):
-        print(f"Updated the job/matched columns of {n} tracked offer(s) to the current matching rules.",
-              file=sys.stderr)
+    rows, _, _ = load_offers()
+    drop_excluded_rows(rows, cfg)
+    # Removed offers aren't re-added: the same title check drops them if found again
     known = {offer_key(r.get("url", "")) for r in rows}
     today = date.today()
     new = []
@@ -891,9 +1085,10 @@ def main() -> int:
         if site.get("expand") == "hellowork":
             for url, name, kind in direct_pages(site, cfg):
                 queued.add(offer_key(url))
-                queue.append((0.5, url, site, None, f"{DIRECT}: {name}", kind))
+                queue.append((0.5, url, site, None, f"{DIRECT}: {name}", kind, ""))
 
-    for query, site in searches:
+    for i, (query, site) in enumerate(searches, 1):
+        say(f"Google search {i}/{len(searches)} ({site['name']}): {query}")
         try:
             results = search(query, cfg, site["tbs"])
         except requests.RequestException as e:
@@ -919,7 +1114,7 @@ def main() -> int:
             def enqueue(priority, source, pkey=None):
                 if expandable and key not in queued:
                     queued.add(key)
-                    queue.append((priority, url, site, pkey, source, "found"))
+                    queue.append((priority, url, site, pkey, source, "found", query))
 
             # Pages read first: on-topic offers (needed for the expiry check), then the
             # direct pages, then listings Google found, then off-topic offers (their
@@ -929,12 +1124,18 @@ def main() -> int:
                 enqueue(1, LISTING)
                 continue
             offer = build_offer(r, site, cfg, today)
+            offer["query"] = query
             if cfg["require_title_match"] and not offer["job"]:
                 st["off-topic"] += 1
                 enqueue(2, SIMILAR)
                 continue
             if offer["contract"].lower() in cfg["hide_contracts"]:
                 st["hidden contract"] += 1
+                enqueue(1, SIMILAR)
+                continue
+            if title_has(offer["title"], cfg["exclude_words"]):
+                # e.g. "Senior ...": dropped, but its page may still list junior offers
+                st["excluded title"] += 1
                 enqueue(1, SIMILAR)
                 continue
             known.add(key)
@@ -947,23 +1148,37 @@ def main() -> int:
 
     if queue:
         print(f"Reading {len(queue)} HelloWork page(s) directly (no Serper credits)...", file=sys.stderr)
-        expand_pages(queue, pending, known, new, stats, cfg, today)
+        expand_pages(queue, pending, known, new, stats, cfg, today, progress=say)
     # Pending offers that weren't found expired (or weren't read) are kept
     for offer in pending.values():
         new.append(offer)
         stats[offer["site"]]["new"] += 1
 
     print_stats(stats)
+    print_query_yield(searches, new)
 
-    rows.extend(new)
-    save_offers(rows, fields, delim)
+    say("Saving offers.csv and the report…")
+    with CSV_LOCK:
+        # Re-read the tracker and add the new offers to THAT, so status clicks (or
+        # spreadsheet edits) made while this run was going are kept
+        rows, fields, delim = load_offers()
+        if removed := drop_excluded_rows(rows, cfg):
+            print(f"Removed {removed} tracked offer(s) with an exclude_title_words word (e.g. senior).",
+                  file=sys.stderr)
+        if n := rematch_rows(rows, cfg):
+            print(f"Updated the job/matched columns of {n} tracked offer(s) to the current matching rules.",
+                  file=sys.stderr)
+        have = {offer_key(r.get("url", "")) for r in rows}
+        new = [o for o in new if offer_key(o["url"]) not in have]
+        rows.extend(new)
+        save_offers(rows, fields, delim)
     REPORT_DIR.mkdir(exist_ok=True)
     html_path = write_html(rows, cfg, today.isoformat())
 
     if not new:
         print(f"[{today}] No new offers.")
     else:
-        report = text_report(new, cfg["titles"], today.isoformat(), cfg["priority_cities"])
+        report = text_report(new, cfg["titles"], today.isoformat(), cfg["priority_cities"], cfg["junior_words"])
         print(report)
         (REPORT_DIR / f"jobs_{today}.txt").write_text(report, encoding="utf-8")
         send_telegram(report)
@@ -971,11 +1186,11 @@ def main() -> int:
     print(f"Tracker: {OFFERS_CSV.name} ({len(rows)} offers)", file=sys.stderr)
     if html_path:
         print(f"HTML report: {html_path}", file=sys.stderr)
-    return 0
+    return 0, {"new": len(new), "total": len(rows), "credits": len(searches)}
 
 
 def print_stats(stats: dict) -> None:
-    cols = ["returned", "other site", "already seen", "listing page", "off-topic", "hidden contract",
+    cols = ["returned", "other site", "already seen", "listing page", "off-topic", "hidden contract", "excluded title",
             "new", "pages read", "expired", "cards found", "cards kept"]
     width = max([len(s) for s in stats] + [4])
     print("\n" + "site".ljust(width) + "".join(c.rjust(15) for c in cols), file=sys.stderr)
@@ -985,6 +1200,21 @@ def print_stats(stats: dict) -> None:
     for name, st in extra.items():
         print(f"{name}: {st['page errors']} page error(s), {st['pages skipped']} page(s) skipped (max_pages), "
               f"{st['pages missing']} page(s) not found (404/410: guessed mot-cle pages or removed listings, normal)", file=sys.stderr)
+    print(file=sys.stderr)
+
+
+def print_query_yield(searches: list[tuple[str, dict]], new: list[dict]) -> None:
+    """Which searches brought new offers this run (offers found via a HelloWork page are
+    credited to the search that found the page). Same data as the `query` column."""
+    if not searches:
+        return
+    per_query = Counter(o.get("query", "") for o in new if o.get("query"))
+    useful = [(q, n) for q, n in per_query.most_common()]
+    print(f"Searches with new offers: {len(useful)} of {len(searches)}", file=sys.stderr)
+    for q, n in useful[:15]:
+        print(f"  {n:3}  {q}", file=sys.stderr)
+    if len(useful) > 15:
+        print(f"  ... {len(useful) - 15} more (see the query column in {OFFERS_CSV.name})", file=sys.stderr)
     print(file=sys.stderr)
 
 
